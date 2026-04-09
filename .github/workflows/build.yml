@@ -6,49 +6,46 @@ on:
       - main
   workflow_dispatch:
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  TOOLCHAINS_DIR: ${{ github.workspace }}/toolchains
+
 jobs:
   build_kernel:
     runs-on: ubuntu-latest
-    env:
-      DEBIAN_FRONTEND: noninteractive
+
     steps:
-      - name: Checkout source
-        uses: actions/checkout@v4
+    - name: Checkout source
+      uses: actions/checkout@v4
 
-      - name: Update & install dependencies
-        run: |
-          sudo apt update
-          sudo apt install -y \
-            bc bison flex zip curl python3 unzip wget git \
-            ccache libhiredis0.14 libncurses5-dev libncursesw5-dev libssl-dev
+    - name: Setup dependencies
+      run: |
+        sudo apt update
+        sudo apt install -y bc bison flex zip curl python3 unzip wget git \
+          libssl-dev libncurses5-dev libncursesw5-dev ccache libhiredis0.14
 
-      - name: Prepare toolchains
-        run: |
-          mkdir -p toolchains
-          echo "PATH=$GITHUB_WORKSPACE/toolchains/clang/bin:$GITHUB_WORKSPACE/toolchains/gcc64/bin:$GITHUB_WORKSPACE/toolchains/gcc32/bin:$PATH" >> $GITHUB_ENV
+    - name: Prepare toolchains
+      run: |
+        mkdir -p $TOOLCHAINS_DIR/clang
+        mkdir -p $TOOLCHAINS_DIR/gcc64
+        mkdir -p $TOOLCHAINS_DIR/gcc32
+        echo "PATH=$TOOLCHAINS_DIR/clang/bin:$TOOLCHAINS_DIR/gcc64/bin:$TOOLCHAINS_DIR/gcc32/bin:$PATH" >> $GITHUB_ENV
 
-      - name: Clean previous build
-        run: |
-          cd kernel/out
-          make mrproper
+    - name: Configure kernel
+      run: |
+        cd kernel
+        make O=out ARCH=arm64 <your_defconfig_here>
+        make -C out KBUILD_SRC=../kernel -f ../kernel/Makefile Image.gz
 
-      - name: Configure kernel
-        run: |
-          cd kernel
-          mkdir -p out
-          cd out
-          make O=$(pwd) ARCH=arm64 miatoll_defconfig
+    - name: Build kernel
+      run: |
+        cd kernel
+        make -C out KBUILD_SRC=../kernel -f ../kernel/Makefile -j$(nproc) Image.gz
 
-      - name: Build kernel Image.gz
-        run: |
-          cd kernel/out
-          make -j$(nproc) O=$(pwd) ARCH=arm64 \
-            Image.gz \
-            CC=clang \
-            CROSS_COMPILE=aarch64-linux-gnu-
-
-      - name: Upload Kernel Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: miatoll_kernel
-          path: kernel/out/arch/arm64/boot/Image.gz
+    - name: Upload kernel artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: kernel-build
+        path: |
+          kernel/out/arch/arm64/boot/Image.gz
+          kernel/out/arch/arm64/boot/dts/
