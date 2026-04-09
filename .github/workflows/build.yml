@@ -8,46 +8,47 @@ on:
 
 jobs:
   build_kernel:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     env:
       DEBIAN_FRONTEND: noninteractive
-
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v3
+      - name: Checkout source
+        uses: actions/checkout@v4
 
-      - name: Install build dependencies
+      - name: Update & install dependencies
         run: |
           sudo apt update
           sudo apt install -y \
-            bc bison flex zip curl python3 unzip wget git ccache \
-            libncurses5-dev libncursesw5-dev libssl-dev libhiredis0.14 clang-16 lld-16
+            bc bison flex zip curl python3 unzip wget git \
+            ccache libhiredis0.14 libncurses5-dev libncursesw5-dev libssl-dev
 
-      - name: Set toolchain paths
+      - name: Prepare toolchains
         run: |
-          mkdir -p $GITHUB_WORKSPACE/toolchains
-          # If you have local gcc64/gcc32, adjust paths here
-          echo "PATH=/usr/lib/llvm-16/bin:$GITHUB_WORKSPACE/toolchains/gcc64/bin:$GITHUB_WORKSPACE/toolchains/gcc32/bin:$PATH" >> $GITHUB_ENV
+          mkdir -p toolchains
+          echo "PATH=$GITHUB_WORKSPACE/toolchains/clang/bin:$GITHUB_WORKSPACE/toolchains/gcc64/bin:$GITHUB_WORKSPACE/toolchains/gcc32/bin:$PATH" >> $GITHUB_ENV
 
-      - name: Prepare kernel build directory
+      - name: Clean previous build
+        run: |
+          cd kernel/out
+          make mrproper
+
+      - name: Configure kernel
         run: |
           cd kernel
           mkdir -p out
-          make O=out ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- mrproper
-          make O=out ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- defconfig
+          cd out
+          make O=$(pwd) ARCH=arm64 miatoll_defconfig
 
-      - name: Remove incompatible Polly flags (safety)
+      - name: Build kernel Image.gz
         run: |
-          find kernel -name 'Makefile' -exec sed -i 's/-polly[^ ]*//g' {} +
-          echo "Polly flags sanitized (if present)."
+          cd kernel/out
+          make -j$(nproc) O=$(pwd) ARCH=arm64 \
+            Image.gz \
+            CC=clang \
+            CROSS_COMPILE=aarch64-linux-gnu-
 
-      - name: Build kernel
-        run: |
-          cd kernel
-          make -C out O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- Image.gz -j$(nproc)
-
-      - name: Archive build artifacts
-        uses: actions/upload-artifact@v3
+      - name: Upload Kernel Artifact
+        uses: actions/upload-artifact@v4
         with:
-          name: kernel-image
+          name: miatoll_kernel
           path: kernel/out/arch/arm64/boot/Image.gz
