@@ -39,19 +39,7 @@ jobs:
           zip unzip python3 ccache
 
     #--------------------------------------------------
-    # 4. Cache Toolchains
-    #--------------------------------------------------
-    - name: Cache Toolchains
-      uses: actions/cache@v3
-      with:
-        path: |
-          toolchains/clang
-          toolchains/gcc64
-          toolchains/gcc32
-        key: toolchains-${{ runner.os }}-v1
-
-    #--------------------------------------------------
-    # 5. Setup Toolchains
+    # 4. Setup Toolchains
     #--------------------------------------------------
     - name: Setup Toolchains
       run: |
@@ -59,76 +47,68 @@ jobs:
         cd toolchains
 
         # Proton Clang
-        if [ ! -d clang ]; then
-          wget -q https://github.com/kdrag0n/proton-clang/archive/refs/heads/master.tar.gz -O clang.tar.gz
-          tar -xf clang.tar.gz
-          mv proton-clang-* clang
-        fi
+        wget -q https://github.com/kdrag0n/proton-clang/archive/refs/heads/master.tar.gz -O clang.tar.gz
+        tar -xf clang.tar.gz
+        mv proton-clang-* clang
 
         # GCC 64-bit
-        if [ ! -d gcc64 ]; then
-          wget -q https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9/archive/refs/heads/lineage-19.1.tar.gz -O gcc64.tar.gz
-          tar -xf gcc64.tar.gz
-          mv android_prebuilts_gcc_* gcc64
-        fi
+        wget -q https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9/archive/refs/heads/lineage-19.1.tar.gz -O gcc64.tar.gz
+        tar -xf gcc64.tar.gz
+        mv android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9-* gcc64
 
         # GCC 32-bit
-        if [ ! -d gcc32 ]; then
-          wget -q https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9/archive/refs/heads/lineage-19.1.tar.gz -O gcc32.tar.gz
-          tar -xf gcc32.tar.gz
-          mv android_prebuilts_gcc_* gcc32
-        fi
+        wget -q https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9/archive/refs/heads/lineage-19.1.tar.gz -O gcc32.tar.gz
+        tar -xf gcc32.tar.gz
+        mv android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9-* gcc32
 
     #--------------------------------------------------
-    # 6. Export Environment Variables
+    # 5. Export Environment Variables
     #--------------------------------------------------
     - name: Set Environment Variables
       run: |
         echo "PATH=$GITHUB_WORKSPACE/toolchains/clang/bin:$GITHUB_WORKSPACE/toolchains/gcc64/bin:$GITHUB_WORKSPACE/toolchains/gcc32/bin:$PATH" >> $GITHUB_ENV
-
         echo "CROSS_COMPILE=aarch64-linux-android-" >> $GITHUB_ENV
         echo "CROSS_COMPILE_ARM32=arm-linux-androideabi-" >> $GITHUB_ENV
         echo "CLANG_TRIPLE=aarch64-linux-gnu-" >> $GITHUB_ENV
-        echo "USE_CCACHE=1" >> $GITHUB_ENV
 
     #--------------------------------------------------
-    # 7. Remove Broken Polly Flags (Safety Net)
+    # 6. Enable UAC2 & Disable 32-bit VDSO
     #--------------------------------------------------
-    - name: Remove Polly Flags
-      run: |
-        cd kernel
-        grep -rl "polly" . | xargs -r sed -i 's/-mllvm[= ]*-polly[^ ]*//g'
-        grep -rl "polly" . | xargs -r sed -i 's/-polly[^ ]*//g'
-
-    #--------------------------------------------------
-    # 8. Enable UAC2 in Defconfig
-    #--------------------------------------------------
-    - name: Enable UAC2
+    - name: Configure Kernel
       run: |
         DEFCONFIG=kernel/arch/arm64/configs/vendor/xiaomi/miatoll_defconfig
+        
+        # Enable UAC2 audio
         echo "CONFIG_USB_CONFIGFS_F_UAC2=y" >> $DEFCONFIG
         echo "CONFIG_USB_CONFIGFS_F_UAC1=y" >> $DEFCONFIG
         echo "CONFIG_USB_G_AUDIO=y" >> $DEFCONFIG
+        
+        # Disable 32-bit VDSO (fixes objcopy error)
+        echo "# CONFIG_COMPAT_VDSO is not set" >> $DEFCONFIG
 
     #--------------------------------------------------
-    # 9. Build Kernel
+    # 7. Build Kernel
     #--------------------------------------------------
     - name: Build Kernel
       run: |
         cd kernel
-        export ARCH=arm64
-        export SUBARCH=arm64
-
-        # Defconfig
+        
+        # Generate defconfig
         make O=out ARCH=arm64 vendor/xiaomi/miatoll_defconfig
-
-        # Parallel build using all cores, clang, and ccache
+        
+        # Verify VDSO config is disabled
+        scripts/config --file out/.config --disable CONFIG_COMPAT_VDSO
+        
+        # Build with LLVM
         make -j$(nproc) O=out \
           ARCH=arm64 \
           CC=clang \
-          HOSTCC=clang \
-          HOSTCXX=clang++ \
           LD=ld.lld \
+          AR=llvm-ar \
+          NM=llvm-nm \
+          OBJCOPY=llvm-objcopy \
+          OBJDUMP=llvm-objdump \
+          READELF=llvm-readelf \
           CROSS_COMPILE=aarch64-linux-android- \
           CROSS_COMPILE_ARM32=arm-linux-androideabi- \
           CLANG_TRIPLE=aarch64-linux-gnu- \
@@ -137,20 +117,29 @@ jobs:
           Image.gz dtbo.img
 
     #--------------------------------------------------
-    # 10. Package Kernel
+    # 8. Package Kernel
     #--------------------------------------------------
     - name: Package Kernel
       run: |
+        # Copy kernel images
         cp kernel/out/arch/arm64/boot/Image.gz AnyKernel3/
         cp kernel/out/arch/arm64/boot/dtbo.img AnyKernel3/
+        
+        # Copy dtb if exists
+        [ -f kernel/out/arch/arm64/boot/dtb.img ] && cp kernel/out/arch/arm64/boot/dtb.img AnyKernel3/
+        
+        # Create flashable zip
         cd AnyKernel3
-        zip -r9 kernel-miatoll-uac2.zip *
+        zip -r9 ../Xiaomi_Miatoll_UAC2_$(date +%Y%m%d-%H%M%S).zip * -x .git README.md .gitignore
+        
+        echo "✅ Kernel package created successfully"
 
     #--------------------------------------------------
-    # 11. Upload Artifact
+    # 9. Upload Artifact
     #--------------------------------------------------
-    - name: Upload Artifact
+    - name: Upload Kernel Zip
       uses: actions/upload-artifact@v4
       with:
-        name: miatoll-uac2-kernel
-        path: AnyKernel3/kernel-miatoll-uac2.zip
+        name: Xiaomi-Miatoll-Kernel-UAC2
+        path: Xiaomi_Miatoll_UAC2_*.zip
+        compression-level: 0
