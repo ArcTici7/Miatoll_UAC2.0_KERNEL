@@ -72,7 +72,16 @@ jobs:
         echo "CLANG_TRIPLE=aarch64-linux-gnu-" >> $GITHUB_ENV
 
     #--------------------------------------------------
-    # 6. Enable UAC2
+    # 6. Remove Broken Polly Flags (CRITICAL FIX)
+    #--------------------------------------------------
+    - name: Remove Polly Flags
+      run: |
+        cd kernel
+        grep -rl "polly" . | xargs -r sed -i 's/-mllvm[= ]*-polly[^ ]*//g'
+        grep -rl "polly" . | xargs -r sed -i 's/-polly[^ ]*//g'
+
+    #--------------------------------------------------
+    # 7. Enable UAC2
     #--------------------------------------------------
     - name: Enable UAC2 in Defconfig
       run: |
@@ -83,7 +92,7 @@ jobs:
         echo "CONFIG_USB_G_AUDIO=y" >> $DEFCONFIG
 
     #--------------------------------------------------
-    # 7. Build Kernel (HARD FIXED)
+    # 8. Build Kernel
     #--------------------------------------------------
     - name: Build Kernel
       run: |
@@ -92,21 +101,14 @@ jobs:
         export ARCH=arm64
         export SUBARCH=arm64
 
-        # Load defconfig
         make O=out ARCH=arm64 vendor/xiaomi/miatoll_defconfig
 
-        # FORCE CLANG EVERYWHERE (this is the real fix)
         make -j$(nproc) O=out \
           ARCH=arm64 \
           CC=clang \
           HOSTCC=clang \
           HOSTCXX=clang++ \
           LD=ld.lld \
-          AR=llvm-ar \
-          NM=llvm-nm \
-          OBJCOPY=llvm-objcopy \
-          OBJDUMP=llvm-objdump \
-          STRIP=llvm-strip \
           CROSS_COMPILE=aarch64-linux-android- \
           CROSS_COMPILE_ARM32=arm-linux-androideabi- \
           CLANG_TRIPLE=aarch64-linux-gnu- \
@@ -115,7 +117,7 @@ jobs:
           Image.gz dtbo.img
 
     #--------------------------------------------------
-    # 8. Package Kernel
+    # 9. Package Kernel
     #--------------------------------------------------
     - name: Package Kernel
       run: |
@@ -126,7 +128,7 @@ jobs:
         zip -r9 kernel-miatoll-uac2.zip *
 
     #--------------------------------------------------
-    # 9. Upload Artifact
+    # 10. Upload Artifact
     #--------------------------------------------------
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
