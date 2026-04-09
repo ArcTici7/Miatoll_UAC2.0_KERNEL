@@ -53,7 +53,7 @@ jobs:
         tar -xzf gcc32.tar.gz --strip-components=1
         rm gcc32.tar.gz
 
-    - name: Fix defconfig - Remove PRIME_CPU_MASK and Add UAC2
+    - name: Fix defconfig - Remove PRIME_CPU_MASK, Disable Stack Protector, Add UAC2
       working-directory: ./kernel
       run: |
         # Remove PRIME_CPU_MASK from all defconfig files
@@ -62,12 +62,17 @@ jobs:
         # Disable SCHED_MC
         find . -name "*defconfig" -exec sed -i 's/CONFIG_SCHED_MC=y/# CONFIG_SCHED_MC is not set/g' {} \;
         
+        # Disable stack protector (not supported by Clang 13)
+        find . -name "*defconfig" -exec sed -i 's/CONFIG_CC_STACKPROTECTOR_STRONG=y/# CONFIG_CC_STACKPROTECTOR_STRONG is not set/g' {} \;
+        echo "# CONFIG_CC_STACKPROTECTOR_STRONG is not set" >> arch/arm64/configs/vendor/miatoll-stock_defconfig
+        echo "# CONFIG_CC_STACKPROTECTOR is not set" >> arch/arm64/configs/vendor/miatoll-stock_defconfig
+        
         # Enable USB gadget audio
         echo "CONFIG_USB_CONFIGFS_F_UAC2=y" >> arch/arm64/configs/vendor/miatoll-stock_defconfig
         echo "CONFIG_USB_CONFIGFS_F_UAC1=y" >> arch/arm64/configs/vendor/miatoll-stock_defconfig
         echo "CONFIG_USB_G_AUDIO=y" >> arch/arm64/configs/vendor/miatoll-stock_defconfig
 
-    - name: Build Kernel (Bypassing silentoldconfig)
+    - name: Build Kernel
       working-directory: ./kernel
       run: |
         export PATH="$GITHUB_WORKSPACE/toolchains/clang/bin:$GITHUB_WORKSPACE/toolchains/gcc64/bin:$GITHUB_WORKSPACE/toolchains/gcc32/bin:$PATH"
@@ -88,10 +93,14 @@ jobs:
         # Aggressively remove PRIME_CPU_MASK from .config
         sed -i '/PRIME_CPU_MASK/d' out/.config
         
-        # Run olddefconfig to set defaults
+        # Disable stack protector in .config
+        sed -i 's/CONFIG_CC_STACKPROTECTOR_STRONG=y/# CONFIG_CC_STACKPROTECTOR_STRONG is not set/g' out/.config
+        sed -i 's/CONFIG_CC_STACKPROTECTOR=y/# CONFIG_CC_STACKPROTECTOR is not set/g' out/.config
+        
+        # Run olddefconfig
         make O=out ARCH=arm64 olddefconfig
         
-        # Remove PRIME_CPU_MASK again (in case it came back)
+        # Remove PRIME_CPU_MASK again
         sed -i '/PRIME_CPU_MASK/d' out/.config
         
         # Force-add UAC2 flags
@@ -102,18 +111,16 @@ jobs:
         echo "CONFIG_USB_CONFIGFS_F_UAC1=y" >> out/.config
         echo "CONFIG_USB_G_AUDIO=y" >> out/.config
         
-        # Manually create the files that silentoldconfig would generate
+        # Create required files to bypass silentoldconfig
         mkdir -p out/include/config
         mkdir -p out/include/generated
         touch out/include/config/auto.conf
         touch out/include/config/auto.conf.cmd
         touch out/include/generated/autoconf.h
-        
-        # Copy .config to auto.conf to satisfy the build system
         cp out/.config out/include/config/auto.conf
         
-        # Build kernel - skip silentoldconfig by using KBUILD_DEFCONFIG
-        make -j$(nproc) O=out ARCH=arm64 KBUILD_DEFCONFIG= Image.gz dtbo.img
+        # Build kernel
+        make -j$(nproc) O=out ARCH=arm64 Image.gz dtbo.img
 
     - name: Package AnyKernel3 Zip
       run: |
