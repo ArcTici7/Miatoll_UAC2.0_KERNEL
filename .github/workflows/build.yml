@@ -19,7 +19,7 @@ jobs:
         path: kernel
 
     #--------------------------------------------------
-    # 2. Checkout AnyKernel3 for packaging
+    # 2. Checkout AnyKernel3
     #--------------------------------------------------
     - name: Clone AnyKernel3
       uses: actions/checkout@v4
@@ -28,7 +28,7 @@ jobs:
         path: AnyKernel3
 
     #--------------------------------------------------
-    # 3. Install Required Packages
+    # 3. Install Dependencies
     #--------------------------------------------------
     - name: Install Dependencies
       run: |
@@ -39,7 +39,7 @@ jobs:
           zip unzip python3
 
     #--------------------------------------------------
-    # 4. Download and Extract Toolchains
+    # 4. Setup Toolchains
     #--------------------------------------------------
     - name: Setup Toolchains
       run: |
@@ -67,23 +67,12 @@ jobs:
       run: |
         echo "PATH=$GITHUB_WORKSPACE/toolchains/clang/bin:$GITHUB_WORKSPACE/toolchains/gcc64/bin:$GITHUB_WORKSPACE/toolchains/gcc32/bin:$PATH" >> $GITHUB_ENV
 
-        # LLVM toolchain
-        echo "CC=clang" >> $GITHUB_ENV
-        echo "LD=ld.lld" >> $GITHUB_ENV
-        echo "AR=llvm-ar" >> $GITHUB_ENV
-        echo "NM=llvm-nm" >> $GITHUB_ENV
-        echo "OBJCOPY=llvm-objcopy" >> $GITHUB_ENV
-        echo "OBJDUMP=llvm-objdump" >> $GITHUB_ENV
-        echo "READELF=llvm-readelf" >> $GITHUB_ENV
-        echo "OBJSIZE=llvm-size" >> $GITHUB_ENV
-        echo "STRIP=llvm-strip" >> $GITHUB_ENV
-
-        # REQUIRED CROSS COMPILE PREFIXES (FIX)
         echo "CROSS_COMPILE=aarch64-linux-android-" >> $GITHUB_ENV
         echo "CROSS_COMPILE_ARM32=arm-linux-androideabi-" >> $GITHUB_ENV
+        echo "CLANG_TRIPLE=aarch64-linux-gnu-" >> $GITHUB_ENV
 
     #--------------------------------------------------
-    # 6. Enable USB Gadget Audio (UAC1 + UAC2)
+    # 6. Enable UAC2
     #--------------------------------------------------
     - name: Enable UAC2 in Defconfig
       run: |
@@ -94,7 +83,7 @@ jobs:
         echo "CONFIG_USB_G_AUDIO=y" >> $DEFCONFIG
 
     #--------------------------------------------------
-    # 7. Build Kernel with LLVM/Clang
+    # 7. Build Kernel (HARD FIXED)
     #--------------------------------------------------
     - name: Build Kernel
       run: |
@@ -106,15 +95,27 @@ jobs:
         # Load defconfig
         make O=out ARCH=arm64 vendor/xiaomi/miatoll_defconfig
 
-        # Compile kernel (LLVM forced)
+        # FORCE CLANG EVERYWHERE (this is the real fix)
         make -j$(nproc) O=out \
           ARCH=arm64 \
+          CC=clang \
+          HOSTCC=clang \
+          HOSTCXX=clang++ \
+          LD=ld.lld \
+          AR=llvm-ar \
+          NM=llvm-nm \
+          OBJCOPY=llvm-objcopy \
+          OBJDUMP=llvm-objdump \
+          STRIP=llvm-strip \
+          CROSS_COMPILE=aarch64-linux-android- \
+          CROSS_COMPILE_ARM32=arm-linux-androideabi- \
+          CLANG_TRIPLE=aarch64-linux-gnu- \
           LLVM=1 \
           LLVM_IAS=1 \
           Image.gz dtbo.img
 
     #--------------------------------------------------
-    # 8. Package with AnyKernel3
+    # 8. Package Kernel
     #--------------------------------------------------
     - name: Package Kernel
       run: |
