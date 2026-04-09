@@ -39,7 +39,7 @@ jobs:
           zip unzip python3
 
     #--------------------------------------------------
-    # 4. Download and Extract Toolchains (WORKING MIRRORS)
+    # 4. Download and Extract Toolchains
     #--------------------------------------------------
     - name: Setup Toolchains
       run: |
@@ -61,17 +61,13 @@ jobs:
         mv android_prebuilts_gcc_* gcc32
 
     #--------------------------------------------------
-    # 5. Export Build Environment Variables
+    # 5. Export Environment Variables
     #--------------------------------------------------
     - name: Set Environment Variables
       run: |
-        echo "CLANG_PATH=$GITHUB_WORKSPACE/toolchains/clang/bin" >> $GITHUB_ENV
-        echo "GCC64_PATH=$GITHUB_WORKSPACE/toolchains/gcc64/bin" >> $GITHUB_ENV
-        echo "GCC32_PATH=$GITHUB_WORKSPACE/toolchains/gcc32/bin" >> $GITHUB_ENV
-
         echo "PATH=$GITHUB_WORKSPACE/toolchains/clang/bin:$GITHUB_WORKSPACE/toolchains/gcc64/bin:$GITHUB_WORKSPACE/toolchains/gcc32/bin:$PATH" >> $GITHUB_ENV
 
-        # LLVM tools
+        # LLVM toolchain
         echo "CC=clang" >> $GITHUB_ENV
         echo "LD=ld.lld" >> $GITHUB_ENV
         echo "AR=llvm-ar" >> $GITHUB_ENV
@@ -81,6 +77,10 @@ jobs:
         echo "READELF=llvm-readelf" >> $GITHUB_ENV
         echo "OBJSIZE=llvm-size" >> $GITHUB_ENV
         echo "STRIP=llvm-strip" >> $GITHUB_ENV
+
+        # REQUIRED CROSS COMPILE PREFIXES (FIX)
+        echo "CROSS_COMPILE=aarch64-linux-android-" >> $GITHUB_ENV
+        echo "CROSS_COMPILE_ARM32=arm-linux-androideabi-" >> $GITHUB_ENV
 
     #--------------------------------------------------
     # 6. Enable USB Gadget Audio (UAC1 + UAC2)
@@ -125,7 +125,7 @@ jobs:
         zip -r9 kernel-miatoll-uac2.zip *
 
     #--------------------------------------------------
-    # 9. Upload Final Flashable ZIP
+    # 9. Upload Artifact
     #--------------------------------------------------
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
