@@ -53,16 +53,21 @@ jobs:
         tar -xzf gcc32.tar.gz --strip-components=1
         rm gcc32.tar.gz
 
-    - name: Fix defconfig - Disable SCHED_MC and Remove PRIME_CPU_MASK
+    - name: Fix defconfig - Aggressive PRIME_CPU_MASK Removal
       working-directory: ./kernel
       run: |
-        # Disable the problematic scheduler feature that requires PRIME_CPU_MASK
+        # Method 1: Disable SCHED_MC (the feature that requires PRIME_CPU_MASK)
         sed -i 's/CONFIG_SCHED_MC=y/# CONFIG_SCHED_MC is not set/g' arch/arm64/configs/vendor/miatoll-stock_defconfig
+        sed -i 's/CONFIG_SCHED_MC=y/# CONFIG_SCHED_MC is not set/g' arch/arm64/configs/miatoll-stock_defconfig 2>/dev/null || true
         
-        # Remove the empty PRIME_CPU_MASK line entirely
-        sed -i '/^CONFIG_PRIME_CPU_MASK=/d' arch/arm64/configs/vendor/miatoll-stock_defconfig
+        # Method 2: Remove PRIME_CPU_MASK line completely
+        sed -i '/PRIME_CPU_MASK/d' arch/arm64/configs/vendor/miatoll-stock_defconfig
+        sed -i '/PRIME_CPU_MASK/d' arch/arm64/configs/miatoll-stock_defconfig 2>/dev/null || true
         
-        # Enable USB gadget audio (UAC2/UAC1)
+        # Method 3: Also remove from any other config files
+        find . -name "*defconfig" -exec sed -i '/PRIME_CPU_MASK/d' {} \;
+        
+        # Enable USB gadget audio
         echo "CONFIG_USB_CONFIGFS_F_UAC2=y" >> arch/arm64/configs/vendor/miatoll-stock_defconfig
         echo "CONFIG_USB_CONFIGFS_F_UAC1=y" >> arch/arm64/configs/vendor/miatoll-stock_defconfig
         echo "CONFIG_USB_G_AUDIO=y" >> arch/arm64/configs/vendor/miatoll-stock_defconfig
@@ -75,6 +80,8 @@ jobs:
         export CROSS_COMPILE_ARM32=arm-linux-androideabi-
         export CC=clang
         export CLANG_TRIPLE=aarch64-linux-gnu-
+        
+        # Force non-interactive mode
         export KCONFIG_NOSILENTUPDATE=1
         export KCONFIG_NONINTERACTIVE=1
         
@@ -87,20 +94,25 @@ jobs:
         # Generate defconfig
         make O=out ARCH=arm64 vendor/miatoll-stock_defconfig
         
-        # Force olddefconfig to accept defaults without prompting
-        yes "" | make O=out ARCH=arm64 olddefconfig
+        # Directly edit .config to remove PRIME_CPU_MASK before olddefconfig
+        sed -i '/PRIME_CPU_MASK/d' out/.config
         
-        # Verify PRIME_CPU_MASK is gone
-        if grep -q "PRIME_CPU_MASK" out/.config; then
-          echo "WARNING: PRIME_CPU_MASK still present in .config"
-          grep "PRIME_CPU_MASK" out/.config
-        else
-          echo "✅ PRIME_CPU_MASK successfully removed"
-        fi
+        # Run olddefconfig without any prompts
+        make O=out ARCH=arm64 olddefconfig
+        
+        # Double-check PRIME_CPU_MASK is gone from .config
+        sed -i '/PRIME_CPU_MASK/d' out/.config
         
         # Verify UAC2 flags are set
         echo "=== UAC2 Configuration Check ==="
-        grep -E "CONFIG_USB_CONFIGFS_F_UAC[12]|CONFIG_USB_G_AUDIO" out/.config || echo "WARNING: UAC2 flags missing"
+        grep "CONFIG_USB_CONFIGFS_F_UAC2" out/.config || echo "CONFIG_USB_CONFIGFS_F_UAC2=y" >> out/.config
+        grep "CONFIG_USB_CONFIGFS_F_UAC1" out/.config || echo "CONFIG_USB_CONFIGFS_F_UAC1=y" >> out/.config
+        grep "CONFIG_USB_G_AUDIO" out/.config || echo "CONFIG_USB_G_AUDIO=y" >> out/.config
+        
+        # Final verification
+        echo "=== Final Config Check ==="
+        grep -E "UAC|USB_G_AUDIO" out/.config
+        echo "=========================="
         
         # Build kernel
         make -j$(nproc) O=out ARCH=arm64 Image.gz dtbo.img
