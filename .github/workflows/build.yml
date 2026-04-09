@@ -53,15 +53,13 @@ jobs:
         tar -xzf gcc32.tar.gz --strip-components=1
         rm gcc32.tar.gz
 
-    - name: Fix PRIME_CPU_MASK & Enable UAC2
+    - name: Fix PRIME_CPU_MASK and Enable UAC2
       working-directory: ./kernel
       run: |
         sed -i 's/^CONFIG_PRIME_CPU_MASK=""/CONFIG_PRIME_CPU_MASK="0"/g' arch/arm64/configs/vendor/miatoll-stock_defconfig
-        cat >> arch/arm64/configs/vendor/miatoll-stock_defconfig << 'EOF'
-CONFIG_USB_CONFIGFS_F_UAC2=y
-CONFIG_USB_CONFIGFS_F_UAC1=y
-CONFIG_USB_G_AUDIO=y
-EOF
+        echo "CONFIG_USB_CONFIGFS_F_UAC2=y" >> arch/arm64/configs/vendor/miatoll-stock_defconfig
+        echo "CONFIG_USB_CONFIGFS_F_UAC1=y" >> arch/arm64/configs/vendor/miatoll-stock_defconfig
+        echo "CONFIG_USB_G_AUDIO=y" >> arch/arm64/configs/vendor/miatoll-stock_defconfig
 
     - name: Build Kernel
       working-directory: ./kernel
@@ -85,9 +83,12 @@ EOF
       run: |
         cp kernel/out/arch/arm64/boot/Image.gz anykernel/
         cp kernel/out/arch/arm64/boot/dtbo.img anykernel/
-        [ -f kernel/out/arch/arm64/boot/dtb.img ] && cp kernel/out/arch/arm64/boot/dtb.img anykernel/
+        if [ -f kernel/out/arch/arm64/boot/dtb.img ]; then
+          cp kernel/out/arch/arm64/boot/dtb.img anykernel/
+        fi
         cd anykernel
         zip -r9 ../Xiaomi_Miatoll_UAC2_$(date +%Y%m%d-%H%M%S).zip * -x .git README.md .gitignore
+        echo "Package created successfully"
 
     - name: Upload Kernel Zip
       uses: actions/upload-artifact@v4
