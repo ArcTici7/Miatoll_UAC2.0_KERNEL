@@ -65,18 +65,49 @@ jobs:
         export CROSS_COMPILE=aarch64-linux-android-
         export CROSS_COMPILE_ARM32=arm-linux-androideabi-
         export CC=clang
-        export CLANG_TRIPLE=aarch64-linux-gnu-
+        export LD=ld.lld
+        export AR=llvm-ar
+        export NM=llvm-nm
+        export OBJCOPY=llvm-objcopy
+        export OBJDUMP=llvm-objdump
+        export READELF=llvm-readelf
+        export OBJSIZE=llvm-size
+        export STRIP=llvm-strip
+        export LLVM=1
+        export LLVM_IAS=1
         
+        echo "=== Toolchain Verification ==="
+        clang --version | head -n1
+        echo "=============================="
+        
+        # Use the correct defconfig path
         make O=out ARCH=arm64 vendor/xiaomi/miatoll_defconfig
-        make -j$(nproc) O=out ARCH=arm64 Image.gz dtbo.img
+        
+        # Build kernel with explicit LLVM flags
+        make -j$(nproc) O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 Image.gz dtbo.img
 
     - name: Package AnyKernel3 Zip
       run: |
-        cp kernel/out/arch/arm64/boot/Image.gz anykernel/
-        cp kernel/out/arch/arm64/boot/dtbo.img anykernel/
-        [ -f kernel/out/arch/arm64/boot/dtb.img ] && cp kernel/out/arch/arm64/boot/dtb.img anykernel/
+        # Copy kernel images
+        if [ -f kernel/out/arch/arm64/boot/Image.gz ]; then
+          cp kernel/out/arch/arm64/boot/Image.gz anykernel/
+        else
+          echo "ERROR: Image.gz not found!"
+          exit 1
+        fi
+        
+        if [ -f kernel/out/arch/arm64/boot/dtbo.img ]; then
+          cp kernel/out/arch/arm64/boot/dtbo.img anykernel/
+        fi
+        
+        if [ -f kernel/out/arch/arm64/boot/dtb.img ]; then
+          cp kernel/out/arch/arm64/boot/dtb.img anykernel/
+        fi
+        
         cd anykernel
         zip -r9 ../Xiaomi_Miatoll_UAC2_$(date +%Y%m%d-%H%M%S).zip * -x .git README.md .gitignore
+        
+        echo "✅ Package created successfully"
 
     - name: Upload Kernel Zip
       uses: actions/upload-artifact@v4
