@@ -11,7 +11,7 @@ jobs:
       uses: actions/checkout@v4
       with:
         repository: clarencelol/kernel_xiaomi_sm6250
-        ref: fourteen
+        ref: kinesis-v29
         path: kernel
 
     - name: Checkout AnyKernel3
@@ -53,10 +53,24 @@ jobs:
     - name: Enable UAC2 Audio Support
       working-directory: ./kernel
       run: |
-        # Add UAC2 flags to defconfig
-        echo "CONFIG_USB_CONFIGFS_F_UAC2=y" >> arch/arm64/configs/vendor/miatoll_defconfig
-        echo "CONFIG_USB_CONFIGFS_F_UAC1=y" >> arch/arm64/configs/vendor/miatoll_defconfig
-        echo "CONFIG_USB_G_AUDIO=y" >> arch/arm64/configs/vendor/miatoll_defconfig
+        # Find the correct defconfig file
+        if [ -f arch/arm64/configs/vendor/miatoll_defconfig ]; then
+          DEFCONFIG="arch/arm64/configs/vendor/miatoll_defconfig"
+        elif [ -f arch/arm64/configs/miatoll_defconfig ]; then
+          DEFCONFIG="arch/arm64/configs/miatoll_defconfig"
+        elif [ -f arch/arm64/configs/miatoll-stock_defconfig ]; then
+          DEFCONFIG="arch/arm64/configs/miatoll-stock_defconfig"
+        else
+          echo "WARNING: Defconfig not found, will use default"
+          DEFCONFIG=""
+        fi
+        
+        if [ -n "$DEFCONFIG" ]; then
+          echo "Adding UAC2 flags to $DEFCONFIG"
+          echo "CONFIG_USB_CONFIGFS_F_UAC2=y" >> $DEFCONFIG
+          echo "CONFIG_USB_CONFIGFS_F_UAC1=y" >> $DEFCONFIG
+          echo "CONFIG_USB_G_AUDIO=y" >> $DEFCONFIG
+        fi
 
     - name: Build Kernel
       working-directory: ./kernel
@@ -73,24 +87,37 @@ jobs:
         ${CROSS_COMPILE_ARM32}gcc --version | head -n1
         echo "=============================="
         
-        # Generate defconfig
-        make O=out ARCH=arm64 vendor/miatoll_defconfig
+        # Try different defconfig names
+        if [ -f arch/arm64/configs/vendor/miatoll_defconfig ]; then
+          make O=out ARCH=arm64 vendor/miatoll_defconfig
+        elif [ -f arch/arm64/configs/miatoll_defconfig ]; then
+          make O=out ARCH=arm64 miatoll_defconfig
+        elif [ -f arch/arm64/configs/miatoll-stock_defconfig ]; then
+          make O=out ARCH=arm64 miatoll-stock_defconfig
+        else
+          echo "ERROR: No defconfig found!"
+          ls -la arch/arm64/configs/
+          exit 1
+        fi
         
         # Build kernel
         make -j$(nproc) O=out ARCH=arm64 Image.gz dtbo.img
 
     - name: Package AnyKernel3 Zip
       run: |
-        # Copy kernel images
-        cp kernel/out/arch/arm64/boot/Image.gz anykernel/
-        cp kernel/out/arch/arm64/boot/dtbo.img anykernel/
+        # Find and copy kernel images
+        if [ -f kernel/out/arch/arm64/boot/Image.gz ]; then
+          cp kernel/out/arch/arm64/boot/Image.gz anykernel/
+        fi
         
-        # Copy dtb.img if it exists
+        if [ -f kernel/out/arch/arm64/boot/dtbo.img ]; then
+          cp kernel/out/arch/arm64/boot/dtbo.img anykernel/
+        fi
+        
         if [ -f kernel/out/arch/arm64/boot/dtb.img ]; then
           cp kernel/out/arch/arm64/boot/dtb.img anykernel/
         fi
         
-        # Create zip
         cd anykernel
         zip -r9 ../Xiaomi_Miatoll_UAC2_$(date +%Y%m%d-%H%M%S).zip * -x .git README.md .gitignore
         
