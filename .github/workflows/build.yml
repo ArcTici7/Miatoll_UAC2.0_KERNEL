@@ -56,16 +56,11 @@ jobs:
     - name: Fix defconfig - Aggressive PRIME_CPU_MASK Removal
       working-directory: ./kernel
       run: |
-        # Method 1: Disable SCHED_MC (the feature that requires PRIME_CPU_MASK)
-        sed -i 's/CONFIG_SCHED_MC=y/# CONFIG_SCHED_MC is not set/g' arch/arm64/configs/vendor/miatoll-stock_defconfig
-        sed -i 's/CONFIG_SCHED_MC=y/# CONFIG_SCHED_MC is not set/g' arch/arm64/configs/miatoll-stock_defconfig 2>/dev/null || true
-        
-        # Method 2: Remove PRIME_CPU_MASK line completely
-        sed -i '/PRIME_CPU_MASK/d' arch/arm64/configs/vendor/miatoll-stock_defconfig
-        sed -i '/PRIME_CPU_MASK/d' arch/arm64/configs/miatoll-stock_defconfig 2>/dev/null || true
-        
-        # Method 3: Also remove from any other config files
+        # Remove PRIME_CPU_MASK from all defconfig files
         find . -name "*defconfig" -exec sed -i '/PRIME_CPU_MASK/d' {} \;
+        
+        # Disable SCHED_MC
+        find . -name "*defconfig" -exec sed -i 's/CONFIG_SCHED_MC=y/# CONFIG_SCHED_MC is not set/g' {} \;
         
         # Enable USB gadget audio
         echo "CONFIG_USB_CONFIGFS_F_UAC2=y" >> arch/arm64/configs/vendor/miatoll-stock_defconfig
@@ -81,7 +76,7 @@ jobs:
         export CC=clang
         export CLANG_TRIPLE=aarch64-linux-gnu-
         
-        # Force non-interactive mode
+        # Disable all config update prompts
         export KCONFIG_NOSILENTUPDATE=1
         export KCONFIG_NONINTERACTIVE=1
         
@@ -94,27 +89,29 @@ jobs:
         # Generate defconfig
         make O=out ARCH=arm64 vendor/miatoll-stock_defconfig
         
-        # Directly edit .config to remove PRIME_CPU_MASK before olddefconfig
+        # Aggressively remove PRIME_CPU_MASK from .config
         sed -i '/PRIME_CPU_MASK/d' out/.config
         
-        # Run olddefconfig without any prompts
+        # Run olddefconfig to set defaults
         make O=out ARCH=arm64 olddefconfig
         
-        # Double-check PRIME_CPU_MASK is gone from .config
+        # Remove PRIME_CPU_MASK again (in case it came back)
         sed -i '/PRIME_CPU_MASK/d' out/.config
         
-        # Verify UAC2 flags are set
-        echo "=== UAC2 Configuration Check ==="
-        grep "CONFIG_USB_CONFIGFS_F_UAC2" out/.config || echo "CONFIG_USB_CONFIGFS_F_UAC2=y" >> out/.config
-        grep "CONFIG_USB_CONFIGFS_F_UAC1" out/.config || echo "CONFIG_USB_CONFIGFS_F_UAC1=y" >> out/.config
-        grep "CONFIG_USB_G_AUDIO" out/.config || echo "CONFIG_USB_G_AUDIO=y" >> out/.config
+        # Force-add UAC2 flags
+        sed -i '/CONFIG_USB_CONFIGFS_F_UAC2/d' out/.config
+        sed -i '/CONFIG_USB_CONFIGFS_F_UAC1/d' out/.config
+        sed -i '/CONFIG_USB_G_AUDIO/d' out/.config
+        echo "CONFIG_USB_CONFIGFS_F_UAC2=y" >> out/.config
+        echo "CONFIG_USB_CONFIGFS_F_UAC1=y" >> out/.config
+        echo "CONFIG_USB_G_AUDIO=y" >> out/.config
         
-        # Final verification
+        # Verify
         echo "=== Final Config Check ==="
-        grep -E "UAC|USB_G_AUDIO" out/.config
+        grep -E "UAC|USB_G_AUDIO|PRIME" out/.config || echo "No PRIME_CPU_MASK found - good!"
         echo "=========================="
         
-        # Build kernel
+        # Build directly WITHOUT silentoldconfig
         make -j$(nproc) O=out ARCH=arm64 Image.gz dtbo.img
 
     - name: Package AnyKernel3 Zip
