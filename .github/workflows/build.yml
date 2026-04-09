@@ -72,19 +72,21 @@ jobs:
         echo "CLANG_TRIPLE=aarch64-linux-gnu-" >> $GITHUB_ENV
 
     #--------------------------------------------------
-    # 6. Enable UAC2 & Disable 32-bit VDSO
+    # 6. Configure Kernel (Enable UAC2 & Disable 32-bit VDSO)
     #--------------------------------------------------
     - name: Configure Kernel
       run: |
-        DEFCONFIG=kernel/arch/arm64/configs/vendor/xiaomi/miatoll_defconfig
-        
-        # Enable UAC2 audio
-        echo "CONFIG_USB_CONFIGFS_F_UAC2=y" >> $DEFCONFIG
-        echo "CONFIG_USB_CONFIGFS_F_UAC1=y" >> $DEFCONFIG
-        echo "CONFIG_USB_G_AUDIO=y" >> $DEFCONFIG
-        
-        # Disable 32-bit VDSO (fixes objcopy error)
-        echo "# CONFIG_COMPAT_VDSO is not set" >> $DEFCONFIG
+        cd kernel
+        make O=out ARCH=arm64 vendor/xiaomi/miatoll_defconfig
+
+        # Enable UAC2 & disable 32-bit VDSO properly
+        scripts/config --file out/.config --enable CONFIG_USB_CONFIGFS_F_UAC2
+        scripts/config --file out/.config --enable CONFIG_USB_CONFIGFS_F_UAC1
+        scripts/config --file out/.config --enable CONFIG_USB_G_AUDIO
+        scripts/config --file out/.config --disable CONFIG_COMPAT_VDSO
+
+        # Make sure config is updated
+        make O=out ARCH=arm64 olddefconfig
 
     #--------------------------------------------------
     # 7. Build Kernel
@@ -92,29 +94,13 @@ jobs:
     - name: Build Kernel
       run: |
         cd kernel
-        
-        # Generate defconfig
-        make O=out ARCH=arm64 vendor/xiaomi/miatoll_defconfig
-        
-        # Verify VDSO config is disabled
-        scripts/config --file out/.config --disable CONFIG_COMPAT_VDSO
-        
-        # Build with LLVM
-        make -j$(nproc) O=out \
-          ARCH=arm64 \
-          CC=clang \
-          LD=ld.lld \
-          AR=llvm-ar \
-          NM=llvm-nm \
-          OBJCOPY=llvm-objcopy \
-          OBJDUMP=llvm-objdump \
-          READELF=llvm-readelf \
-          CROSS_COMPILE=aarch64-linux-android- \
-          CROSS_COMPILE_ARM32=arm-linux-androideabi- \
-          CLANG_TRIPLE=aarch64-linux-gnu- \
-          LLVM=1 \
-          LLVM_IAS=1 \
-          Image.gz dtbo.img
+        # Build main kernel image
+        make -j$(nproc) O=out ARCH=arm64 CC=clang Image.gz V=1
+
+        # Build dtbo.img only if kernel supports it
+        if grep -q DTBO_IMAGE out/.config; then
+          make -j$(nproc) O=out ARCH=arm64 CC=clang dtbo.img
+        fi
 
     #--------------------------------------------------
     # 8. Package Kernel
@@ -123,15 +109,13 @@ jobs:
       run: |
         # Copy kernel images
         cp kernel/out/arch/arm64/boot/Image.gz AnyKernel3/
-        cp kernel/out/arch/arm64/boot/dtbo.img AnyKernel3/
-        
-        # Copy dtb if exists
+        cp kernel/out/arch/arm64/boot/dtbo.img AnyKernel3/ 2>/dev/null || true
         [ -f kernel/out/arch/arm64/boot/dtb.img ] && cp kernel/out/arch/arm64/boot/dtb.img AnyKernel3/
-        
+
         # Create flashable zip
         cd AnyKernel3
         zip -r9 ../Xiaomi_Miatoll_UAC2_$(date +%Y%m%d-%H%M%S).zip * -x .git README.md .gitignore
-        
+
         echo "✅ Kernel package created successfully"
 
     #--------------------------------------------------
