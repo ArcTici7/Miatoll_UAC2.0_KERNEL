@@ -36,33 +36,47 @@ jobs:
         sudo apt install -y \
           git wget curl bc bison flex libssl-dev \
           libncurses5-dev libncursesw5-dev \
-          zip unzip python3 ccache
+          zip unzip python3 ccache xz-utils
 
     #--------------------------------------------------
-    # 4. Setup Toolchains
+    # 4. Setup LLVM 17 Toolchain (Official Release)
     #--------------------------------------------------
-    - name: Setup Toolchains
+    - name: Setup LLVM 17
       run: |
         mkdir -p toolchains
         cd toolchains
+        
+        # Download official LLVM 17.0.2 for Ubuntu 22.04
+        wget -q https://github.com/llvm/llvm-project/releases/download/llvmorg-17.0.2/clang+llvm-17.0.2-x86_64-linux-gnu-ubuntu-22.04.tar.xz
+        
+        # Extract
+        tar -xf clang+llvm-17.0.2-x86_64-linux-gnu-ubuntu-22.04.tar.xz
+        
+        # Move to clean directory name
+        mv clang+llvm-17.0.2-x86_64-linux-gnu-ubuntu-22.04 clang
+        
+        # Clean up
+        rm clang+llvm-17.0.2-x86_64-linux-gnu-ubuntu-22.04.tar.xz
 
-        # Proton Clang
-        wget -q https://github.com/kdrag0n/proton-clang/archive/refs/heads/master.tar.gz -O clang.tar.gz
-        tar -xf clang.tar.gz
-        mv proton-clang-* clang
-
+    #--------------------------------------------------
+    # 5. Setup GCC Toolchains (for 32-bit support)
+    #--------------------------------------------------
+    - name: Setup GCC Toolchains
+      run: |
+        cd toolchains
+        
         # GCC 64-bit
         wget -q https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9/archive/refs/heads/lineage-19.1.tar.gz -O gcc64.tar.gz
         tar -xf gcc64.tar.gz
         mv android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9-* gcc64
-
+        
         # GCC 32-bit
         wget -q https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9/archive/refs/heads/lineage-19.1.tar.gz -O gcc32.tar.gz
         tar -xf gcc32.tar.gz
         mv android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9-* gcc32
 
     #--------------------------------------------------
-    # 5. Export Environment Variables
+    # 6. Export Environment Variables
     #--------------------------------------------------
     - name: Set Environment Variables
       run: |
@@ -72,7 +86,7 @@ jobs:
         echo "CLANG_TRIPLE=aarch64-linux-gnu-" >> $GITHUB_ENV
 
     #--------------------------------------------------
-    # 6. Enable UAC2 & Disable 32-bit VDSO
+    # 7. Enable UAC2 & Disable Problematic Features
     #--------------------------------------------------
     - name: Configure Kernel
       run: |
@@ -87,7 +101,7 @@ jobs:
         echo "# CONFIG_COMPAT_VDSO is not set" >> $DEFCONFIG
 
     #--------------------------------------------------
-    # 7. Build Kernel
+    # 8. Build Kernel with LLVM 17
     #--------------------------------------------------
     - name: Build Kernel
       run: |
@@ -96,10 +110,10 @@ jobs:
         # Generate defconfig
         make O=out ARCH=arm64 vendor/xiaomi/miatoll_defconfig
         
-        # Verify VDSO config is disabled
+        # Disable COMPAT_VDSO in .config
         scripts/config --file out/.config --disable CONFIG_COMPAT_VDSO
         
-        # Build with LLVM
+        # Build with LLVM 17
         make -j$(nproc) O=out \
           ARCH=arm64 \
           CC=clang \
@@ -117,10 +131,16 @@ jobs:
           Image.gz dtbo.img
 
     #--------------------------------------------------
-    # 8. Package Kernel
+    # 9. Package Kernel
     #--------------------------------------------------
     - name: Package Kernel
       run: |
+        # Verify images were created
+        if [ ! -f kernel/out/arch/arm64/boot/Image.gz ]; then
+          echo "ERROR: Image.gz not found!"
+          exit 1
+        fi
+        
         # Copy kernel images
         cp kernel/out/arch/arm64/boot/Image.gz AnyKernel3/
         cp kernel/out/arch/arm64/boot/dtbo.img AnyKernel3/
@@ -135,7 +155,7 @@ jobs:
         echo "✅ Kernel package created successfully"
 
     #--------------------------------------------------
-    # 9. Upload Artifact
+    # 10. Upload Artifact
     #--------------------------------------------------
     - name: Upload Kernel Zip
       uses: actions/upload-artifact@v4
