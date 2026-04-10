@@ -24,60 +24,26 @@ jobs:
     - name: Apply UAC2 Windows Patches
       working-directory: ./kernel
       run: |
-        cat > uac2_win_fixes.patch << 'EOF'
---- a/drivers/usb/gadget/function/f_uac2.c
-+++ b/drivers/usb/gadget/function/f_uac2.c
-@@ -371,7 +371,7 @@ static struct usb_endpoint_descriptor fs_epout_desc = {
- 	.bLength = USB_DT_ENDPOINT_SIZE,
- 	.bDescriptorType = USB_DT_ENDPOINT,
- 	.bEndpointAddress = USB_DIR_OUT,
--	.bmAttributes = USB_ENDPOINT_XFER_ISOC | USB_ENDPOINT_SYNC_SYNC,
-+	.bmAttributes = USB_ENDPOINT_XFER_ISOC | USB_ENDPOINT_SYNC_ADAPTIVE,
- 	/* .wMaxPacketSize = DYNAMIC */
- 	.bInterval = 4,
- };
-@@ -393,7 +393,7 @@ static struct usb_endpoint_descriptor hs_epout_desc = {
- 	.bLength = USB_DT_ENDPOINT_SIZE,
- 	.bDescriptorType = USB_DT_ENDPOINT,
- 	.bEndpointAddress = USB_DIR_OUT,
--	.bmAttributes = USB_ENDPOINT_XFER_ISOC | USB_ENDPOINT_SYNC_SYNC,
-+	.bmAttributes = USB_ENDPOINT_XFER_ISOC | USB_ENDPOINT_SYNC_ADAPTIVE,
- 	/* .wMaxPacketSize = DYNAMIC */
- 	.bInterval = 4,
- };
-@@ -539,7 +539,7 @@ static int set_ep_max_packet_size(const struct f_uac2_opts *uac2_opts,
- 
- 	max_size_bw = num_channels(chmask) * ssize *
- 		(uac2_opts->fb_max > 0 ? 1 : 0) +
--		DIV_ROUND_UP(srate, factor / (1 << (ep_desc->bInterval - 1)));
-+		(DIV_ROUND_UP(srate, factor / (1 << (ep_desc->bInterval - 1))) + 1);
- 	ep_desc->wMaxPacketSize = cpu_to_le16(min_t(u16, max_size_bw,
- 						    max_size_ep));
- 
-@@ -721,8 +721,8 @@ static int afunc_bind(struct usb_configuration *cfg, struct usb_function *f)
- 	usb_out_it_desc.bNrChannels = num_channels(uac2_opts->c_chmask);
- 	usb_out_it_desc.bmChannelConfig = cpu_to_le32(uac2_opts->c_chmask);
- 	usb_out_it_desc.iChannelNames = 0;
--	usb_out_it_desc.wTerminalType = cpu_to_le16(UAC_TERMINAL_UNDEFINED);
--	io_in_it_desc.wTerminalType = cpu_to_le16(UAC_TERMINAL_UNDEFINED);
-+	usb_out_it_desc.wTerminalType = cpu_to_le16(UAC_TERMINAL_MICROPHONE);
-+	io_in_it_desc.wTerminalType = cpu_to_le16(UAC_TERMINAL_SPEAKER);
- 
- 	/* AS AS Interface 1 - Playback */
- 	usb_interface_desc(&as_in_if1_desc, &as_in_if1_desc,
-EOF
-        # Apply the patch
-        patch -p1 < uac2_win_fixes.patch
-        echo "✅ All 4 UAC2 patches applied successfully"
+        echo "=== Applying 4 UAC2 patches ==="
         
-        # Verify patches were applied
-        echo ""
+        # PATCH 1: Change OUT endpoint SYNC -> ADAPTIVE
+        sed -i '377s/USB_ENDPOINT_SYNC_SYNC/USB_ENDPOINT_SYNC_ADAPTIVE/' drivers/usb/gadget/function/f_uac2.c
+        
+        # PATCH 2: Add +1 frame to wMaxPacketSize
+        sed -i '539s/cpu_to_le16(min_t(u16, max_size_bw,/cpu_to_le16(min_t(u16, max_size_bw, + 1,/' drivers/usb/gadget/function/f_uac2.c
+        
+        # PATCH 3: Set input terminal to MICROPHONE
+        sed -i 's/UAC_INPUT_TERMINAL_UNDEFINED/UAC_INPUT_TERMINAL_MICROPHONE/g' drivers/usb/gadget/function/f_uac2.c
+        
+        # PATCH 4: Set output terminal to SPEAKER
+        sed -i 's/UAC_OUTPUT_TERMINAL_UNDEFINED/UAC_OUTPUT_TERMINAL_SPEAKER/g' drivers/usb/gadget/function/f_uac2.c
+        
         echo "=== Verification ==="
         grep -q "SYNC_ADAPTIVE" drivers/usb/gadget/function/f_uac2.c && echo "✅ Patch 1: Adaptive endpoint"
-        grep -q "DIV_ROUND_UP.*+ 1" drivers/usb/gadget/function/f_uac2.c && echo "✅ Patch 2: +1 frame"
-        grep -q "UAC_TERMINAL_MICROPHONE" drivers/usb/gadget/function/f_uac2.c && echo "✅ Patch 3: Microphone terminal"
-        grep -q "UAC_TERMINAL_SPEAKER" drivers/usb/gadget/function/f_uac2.c && echo "✅ Patch 4: Speaker terminal"
-        echo "========================="
+        grep -q "max_size_bw, + 1" drivers/usb/gadget/function/f_uac2.c && echo "✅ Patch 2: +1 frame"
+        grep -q "UAC_INPUT_TERMINAL_MICROPHONE" drivers/usb/gadget/function/f_uac2.c && echo "✅ Patch 3: Microphone terminal"
+        grep -q "UAC_OUTPUT_TERMINAL_SPEAKER" drivers/usb/gadget/function/f_uac2.c && echo "✅ Patch 4: Speaker terminal"
+        echo "=== All 4 patches applied ==="
 
     #--------------------------------------------------
     # 3. Checkout AnyKernel3
@@ -135,7 +101,7 @@ EOF
         echo "CLANG_TRIPLE=aarch64-linux-gnu-" >> $GITHUB_ENV
 
     #--------------------------------------------------
-    # 8. Configure Kernel (Enable UAC2)
+    # 8. Configure Kernel
     #--------------------------------------------------
     - name: Configure Kernel
       run: |
