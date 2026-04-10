@@ -1,4 +1,4 @@
-name: Build Xiaomi Miatoll Kernel (UAC2 DAC Mode)
+name: Build Xiaomi Miatoll Kernel (UAC2 Enabled)
 
 on:
   workflow_dispatch:
@@ -14,70 +14,83 @@ jobs:
     - name: Clone Kernel Source
       uses: actions/checkout@v4
       with:
-        repository: LineageOS/android_kernel_xiaomi_sm6250
-        ref: lineage-21
+        repository: clarencelol/kernel_xiaomi_sm6250
+        ref: kinesis-v29
         path: kernel
 
     #--------------------------------------------------
-    # 2. Apply UAC2 Windows Patches (with verification)
+    # 2. Apply Patch 4 ONLY with Error Detection
     #--------------------------------------------------
-    - name: Apply UAC2 Windows Patches
+    - name: Apply Patch 4 - Feedback Endpoint
       working-directory: ./kernel
       run: |
-        echo "=== Applying UAC2 patches ==="
+        echo "=== Applying Patch 4: Feedback Endpoint for Windows UAC2 ==="
         
-        # Patch 1: Adaptive endpoint
-        sed -i 's/USB_ENDPOINT_SYNC_SYNC/USB_ENDPOINT_SYNC_ADAPTIVE/g' drivers/usb/gadget/function/f_uac2.c
-        
-        # Patch 2: +1 frame
-        sed -i 's/cpu_to_le16(min_t(u16, max_size_bw,/cpu_to_le16(min_t(u16, max_size_bw, + 1,/' drivers/usb/gadget/function/f_uac2.c
-        
-        # Patch 3: Microphone terminal
-        sed -i 's/UAC_INPUT_TERMINAL_UNDEFINED/UAC_INPUT_TERMINAL_MICROPHONE/g' drivers/usb/gadget/function/f_uac2.c
-        
-        # Patch 4: Speaker terminal
-        sed -i 's/UAC_OUTPUT_TERMINAL_UNDEFINED/UAC_OUTPUT_TERMINAL_SPEAKER/g' drivers/usb/gadget/function/f_uac2.c
-        
-        # Verify patches applied
-        echo "=== Verification ==="
-        grep -q "SYNC_ADAPTIVE" drivers/usb/gadget/function/f_uac2.c && echo "✅ Patch 1"
-        grep -q "max_size_bw, + 1" drivers/usb/gadget/function/f_uac2.c && echo "✅ Patch 2"
-        grep -q "UAC_INPUT_TERMINAL_MICROPHONE" drivers/usb/gadget/function/f_uac2.c && echo "✅ Patch 3"
-        grep -q "UAC_OUTPUT_TERMINAL_SPEAKER" drivers/usb/gadget/function/f_uac2.c && echo "✅ Patch 4"
-        
-        if ! grep -q "SYNC_ADAPTIVE" drivers/usb/gadget/function/f_uac2.c; then
-          echo "❌ CRITICAL: Patch 1 failed - stopping build"
+        # Check if f_uac2.c exists
+        if [ ! -f drivers/usb/gadget/function/f_uac2.c ]; then
+          echo "❌ ERROR: f_uac2.c not found! Patch cannot be applied."
           exit 1
         fi
+        
+        # Check if the target line for the patch exists
+        if ! grep -q "ss_epin_fback_desc = {" drivers/usb/gadget/function/f_uac2.c; then
+          echo "❌ ERROR: Target line 'ss_epin_fback_desc = {' not found in f_uac2.c"
+          echo "   The kernel source may have changed. Patch aborted."
+          exit 1
+        fi
+        
+        echo "   Target found. Applying patch..."
+        
+        # Add the SuperSpeed feedback endpoint companion descriptor
+        sed -i '/ss_epin_fback_desc = {/a static struct usb_ss_ep_comp_descriptor ss_epin_fback_desc_comp = { .bLength = sizeof(ss_epin_fback_desc_comp), .bDescriptorType = USB_DT_SS_ENDPOINT_COMP, .bMaxBurst = 0, .bmAttributes = 0, .wBytesPerInterval = cpu_to_le16(4), };' drivers/usb/gadget/function/f_uac2.c
+        
+        # Check if the first sed command succeeded
+        if [ $? -ne 0 ]; then
+          echo "❌ ERROR: Failed to add feedback endpoint descriptor"
+          exit 1
+        fi
+        
+        # Add the companion descriptor to the SS audio descriptor array
+        sed -i '/&ss_epin_fback_desc,/a \	(struct usb_descriptor_header *)&ss_epin_fback_desc_comp,' drivers/usb/gadget/function/f_uac2.c
+        
+        # Check if the second sed command succeeded
+        if [ $? -ne 0 ]; then
+          echo "❌ ERROR: Failed to add companion descriptor to array"
+          exit 1
+        fi
+        
+        echo ""
+        echo "=== Verification ==="
+        
+        # Verify the patch was applied correctly
+        if grep -q "ss_epin_fback_desc_comp" drivers/usb/gadget/function/f_uac2.c; then
+          echo "✅ Patch 4: Feedback endpoint companion descriptor added"
+        else
+          echo "❌ ERROR: Patch 4 verification failed - descriptor not found in file"
+          echo "   The sed command may have failed silently."
+          exit 1
+        fi
+        
+        # Verify the companion descriptor was added to the array
+        if grep -A2 "&ss_epin_fback_desc," drivers/usb/gadget/function/f_uac2.c | grep -q "ss_epin_fback_desc_comp"; then
+          echo "✅ Patch 4: Companion descriptor added to SS audio array"
+        else
+          echo "❌ ERROR: Companion descriptor not found in SS audio array"
+          echo "   The second sed command may have failed."
+          exit 1
+        fi
+        
+        echo ""
+        echo "✅ Patch 4 applied successfully and verified"
+        echo ""
+        echo "=== Modified lines preview ==="
+        grep -B2 -A2 "ss_epin_fback_desc_comp" drivers/usb/gadget/function/f_uac2.c || echo "   (preview not available)"
+        
+        # Final success marker
+        echo "PATCH_4_SUCCESS=true" >> $GITHUB_ENV
 
     #--------------------------------------------------
-    # 3. Add DAC Mode Configs (compile-time safe)
-    #--------------------------------------------------
-    - name: Add DAC Mode Configs
-      working-directory: ./kernel
-      run: |
-        cat >> arch/arm64/configs/vendor/xiaomi/miatoll_defconfig << 'EOF'
-        
-        # === DAC MODE STABILITY ===
-        CONFIG_USB_SUSPEND=n
-        CONFIG_USB_CONFIGFS_LOCK=y
-        CONFIG_RT_GROUP_SCHED=y
-        CONFIG_PREEMPT=y
-        CONFIG_HIGH_RES_TIMERS=y
-        CONFIG_HZ_1000=y
-        CONFIG_CPU_IDLE_GOV_LADDER=y
-        CONFIG_PM_SLEEP=n
-        CONFIG_USB_DWC3_HOST=y
-        CONFIG_USB_GADGET_VBUS_DRAW=500
-        
-        # Disable debugging (smaller kernel, faster compile)
-        # CONFIG_DEBUG_INFO is not set
-        # CONFIG_DYNAMIC_DEBUG is not set
-        # CONFIG_DEBUG_KERNEL is not set
-        EOF
-
-    #--------------------------------------------------
-    # 4. Clone AnyKernel3
+    # 3. Checkout AnyKernel3
     #--------------------------------------------------
     - name: Clone AnyKernel3
       uses: actions/checkout@v4
@@ -86,150 +99,108 @@ jobs:
         path: AnyKernel3
 
     #--------------------------------------------------
-    # 5. Install ALL possible dependencies (no missing commands)
+    # 4. Install Dependencies
     #--------------------------------------------------
     - name: Install Dependencies
       run: |
         sudo apt update
         sudo apt install -y \
-          bc bison build-essential ccache curl \
-          flex gcc-multilib g++-multilib git \
-          libssl-dev libncurses5-dev libncursesw5-dev \
-          lzop pngcrush schedtool squashfs-tools \
-          xsltproc zip zlib1g-dev python3 \
-          xz-utils cpio device-tree-compiler
+          git wget curl bc bison flex libssl-dev \
+          libncurses5-dev libncursesw5-dev \
+          zip unzip python3 ccache xz-utils
 
     #--------------------------------------------------
-    # 6. Setup LLVM 17 (fresh download, no cache)
+    # 5. Setup LLVM 17 Toolchain
     #--------------------------------------------------
     - name: Setup LLVM 17
       run: |
-        mkdir -p toolchains/clang
-        cd toolchains/clang
-        curl -L -o clang.tar.xz "https://github.com/llvm/llvm-project/releases/download/llvmorg-17.0.2/clang+llvm-17.0.2-x86_64-linux-gnu-ubuntu-22.04.tar.xz"
-        tar -xf clang.tar.xz --strip-components=1
-        rm clang.tar.xz
-        chmod +x bin/*
+        mkdir -p toolchains
+        cd toolchains
+        wget -q https://github.com/llvm/llvm-project/releases/download/llvmorg-17.0.2/clang+llvm-17.0.2-x86_64-linux-gnu-ubuntu-22.04.tar.xz
+        tar -xf clang+llvm-17.0.2-x86_64-linux-gnu-ubuntu-22.04.tar.xz
+        mv clang+llvm-17.0.2-x86_64-linux-gnu-ubuntu-22.04 clang
+        rm clang+llvm-17.0.2-x86_64-linux-gnu-ubuntu-22.04.tar.xz
 
     #--------------------------------------------------
-    # 7. Setup GCC (fresh download, no cache)
+    # 6. Setup GCC Toolchains
     #--------------------------------------------------
-    - name: Setup GCC
+    - name: Setup GCC Toolchains
       run: |
-        mkdir -p toolchains/gcc64 toolchains/gcc32
-        
-        cd toolchains/gcc64
-        curl -L -o gcc64.tar.gz "https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9/archive/refs/heads/lineage-19.1.tar.gz"
-        tar -xf gcc64.tar.gz --strip-components=1
-        rm gcc64.tar.gz
-        
-        cd ../gcc32
-        curl -L -o gcc32.tar.gz "https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9/archive/refs/heads/lineage-19.1.tar.gz"
-        tar -xf gcc32.tar.gz --strip-components=1
-        rm gcc32.tar.gz
+        cd toolchains
+        wget -q https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9/archive/refs/heads/lineage-19.1.tar.gz -O gcc64.tar.gz
+        tar -xf gcc64.tar.gz
+        mv android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9-* gcc64
+        wget -q https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9/archive/refs/heads/lineage-19.1.tar.gz -O gcc32.tar.gz
+        tar -xf gcc32.tar.gz
+        mv android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9-* gcc32
 
     #--------------------------------------------------
-    # 8. Environment Variables
+    # 7. Export Environment Variables
     #--------------------------------------------------
-    - name: Set Environment
+    - name: Set Environment Variables
       run: |
         echo "PATH=$GITHUB_WORKSPACE/toolchains/clang/bin:$GITHUB_WORKSPACE/toolchains/gcc64/bin:$GITHUB_WORKSPACE/toolchains/gcc32/bin:$PATH" >> $GITHUB_ENV
         echo "CROSS_COMPILE=aarch64-linux-android-" >> $GITHUB_ENV
         echo "CROSS_COMPILE_ARM32=arm-linux-androideabi-" >> $GITHUB_ENV
-        echo "CC=clang" >> $GITHUB_ENV
-        echo "LD=ld.lld" >> $GITHUB_ENV
-        echo "AR=llvm-ar" >> $GITHUB_ENV
-        echo "NM=llvm-nm" >> $GITHUB_ENV
-        echo "OBJCOPY=llvm-objcopy" >> $GITHUB_ENV
-        echo "OBJDUMP=llvm-objdump" >> $GITHUB_ENV
-        echo "READELF=llvm-readelf" >> $GITHUB_ENV
+        echo "CLANG_TRIPLE=aarch64-linux-gnu-" >> $GITHUB_ENV
 
     #--------------------------------------------------
-    # 9. Build Kernel (with compile-time safety)
+    # 8. Configure Kernel
+    #--------------------------------------------------
+    - name: Configure Kernel
+      run: |
+        DEFCONFIG=kernel/arch/arm64/configs/vendor/xiaomi/miatoll_defconfig
+        echo "CONFIG_USB_CONFIGFS_F_UAC2=y" >> $DEFCONFIG
+        echo "CONFIG_USB_CONFIGFS_F_UAC1=y" >> $DEFCONFIG
+        echo "CONFIG_USB_G_AUDIO=y" >> $DEFCONFIG
+        echo "# CONFIG_COMPAT_VDSO is not set" >> $DEFCONFIG
+
+    #--------------------------------------------------
+    # 9. Build Kernel with LLVM 17
     #--------------------------------------------------
     - name: Build Kernel
-      working-directory: ./kernel
       run: |
-        # Generate defconfig
+        cd kernel
         make O=out ARCH=arm64 vendor/xiaomi/miatoll_defconfig
-        
-        # Disable broken WiFi driver (prevents compile failure)
-        scripts/config --file out/.config --disable CONFIG_QCA_CLD_WLAN
-        scripts/config --file out/.config --disable CONFIG_QCACLD_WLAN
-        scripts/config --file out/.config --disable CONFIG_WLAN
-        
-        # Disable all debugging (faster compile, smaller kernel)
-        scripts/config --file out/.config --disable CONFIG_DEBUG_KERNEL
-        scripts/config --file out/.config --disable CONFIG_DEBUG_INFO
-        scripts/config --file out/.config --disable CONFIG_DYNAMIC_DEBUG
-        
-        # Ensure no interactive prompts
-        scripts/config --file out/.config --enable CONFIG_IKCONFIG
-        scripts/config --file out/.config --enable CONFIG_IKCONFIG_PROC
-        
-        # Finalize config (resolves all symbols)
-        make O=out ARCH=arm64 olddefconfig
-        
-        # Build with load limiting (prevents OOM)
-        # -j$(nproc) = all cores, but --max-load prevents overload
-        make -j$(nproc) O=out ARCH=arm64 \
-          CC=clang LD=ld.lld AR=llvm-ar NM=llvm-nm \
-          OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump \
+        scripts/config --file out/.config --disable CONFIG_COMPAT_VDSO
+        make -j$(nproc) O=out \
+          ARCH=arm64 \
+          CC=clang \
+          LD=ld.lld \
+          AR=llvm-ar \
+          NM=llvm-nm \
+          OBJCOPY=llvm-objcopy \
+          OBJDUMP=llvm-objdump \
           READELF=llvm-readelf \
           CROSS_COMPILE=aarch64-linux-android- \
           CROSS_COMPILE_ARM32=arm-linux-androideabi- \
           CLANG_TRIPLE=aarch64-linux-gnu- \
-          LLVM=1 LLVM_IAS=1 \
-          --max-load=4 \
+          LLVM=1 \
+          LLVM_IAS=1 \
           Image.gz dtbo.img
 
     #--------------------------------------------------
-    # 10. Verify build succeeded
-    #--------------------------------------------------
-    - name: Verify Build
-      run: |
-        if [ ! -f kernel/out/arch/arm64/boot/Image.gz ]; then
-          echo "❌ Build failed: Image.gz not found"
-          exit 1
-        fi
-        if [ ! -f kernel/out/arch/arm64/boot/dtbo.img ]; then
-          echo "❌ Build failed: dtbo.img not found"
-          exit 1
-        fi
-        echo "✅ Build successful"
-        echo "Image.gz size: $(ls -lh kernel/out/arch/arm64/boot/Image.gz | awk '{print $5}')"
-        echo "dtbo.img size: $(ls -lh kernel/out/arch/arm64/boot/dtbo.img | awk '{print $5}')"
-
-    #--------------------------------------------------
-    # 11. Configure AnyKernel3
-    #--------------------------------------------------
-    - name: Configure AnyKernel3
-      run: |
-        cd AnyKernel3
-        sed -i 's/device.name1=.*/device.name1=miatoll/' anykernel.sh
-        sed -i 's/device.name2=.*/device.name2=joyeuse/' anykernel.sh
-        sed -i 's/device.name3=.*/device.name3=curtana/' anykernel.sh
-        sed -i 's/device.name4=.*/device.name4=gram/' anykernel.sh
-        sed -i 's|block=/dev/block/platform/omap/omap_hsmmc.0/by-name/boot;|block=/dev/block/by-name/boot;|' anykernel.sh
-        sed -i 's/is_slot_device=.*/is_slot_device=0;/' anykernel.sh
-
-    #--------------------------------------------------
-    # 12. Package Kernel
+    # 10. Package Kernel
     #--------------------------------------------------
     - name: Package Kernel
       run: |
+        if [ ! -f kernel/out/arch/arm64/boot/Image.gz ]; then
+          echo "ERROR: Image.gz not found!"
+          exit 1
+        fi
         cp kernel/out/arch/arm64/boot/Image.gz AnyKernel3/
         cp kernel/out/arch/arm64/boot/dtbo.img AnyKernel3/
+        [ -f kernel/out/arch/arm64/boot/dtb.img ] && cp kernel/out/arch/arm64/boot/dtb.img AnyKernel3/
         cd AnyKernel3
-        zip -r9 ../Xiaomi_Miatoll_DAC_Kernel_$(date +%Y%m%d-%H%M%S).zip . -x ".git/*" "README.md" ".gitignore"
-        echo "✅ Package created"
+        zip -r9 ../Xiaomi_Miatoll_UAC2_$(date +%Y%m%d-%H%M%S).zip * -x .git README.md .gitignore
+        echo "✅ Kernel package created successfully"
 
     #--------------------------------------------------
-    # 13. Upload
+    # 11. Upload Artifact
     #--------------------------------------------------
     - name: Upload Kernel Zip
       uses: actions/upload-artifact@v4
       with:
-        name: Xiaomi-Miatoll-DAC-Kernel
-        path: Xiaomi_Miatoll_DAC_Kernel_*.zip
+        name: Xiaomi-Miatoll-Kernel-UAC2
+        path: Xiaomi_Miatoll_UAC2_*.zip
         compression-level: 0
