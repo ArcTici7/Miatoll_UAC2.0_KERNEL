@@ -18,6 +18,43 @@ jobs:
         ref: kinesis-v29
         path: kernel
 
+            #--------------------------------------------------
+    # 1.5 Check if Windows UAC2 patches are already present
+    #--------------------------------------------------
+    - name: Check Existing UAC2 Patches
+      working-directory: ./kernel
+      run: |
+        echo "=== Checking for Patch 1 (wMaxPacketSize) ==="
+        if grep -q "adding 1 frame provision for Win10" drivers/usb/gadget/function/f_uac2.c; then
+          echo "✅ Patch 1 is ALREADY APPLIED"
+        else
+          echo "❌ Patch 1 is MISSING"
+        fi
+        
+        echo ""
+        echo "=== Checking for Patch 2 (SuperSpeed descriptors) ==="
+        if grep -q "wBytesPerInterval" drivers/usb/gadget/function/f_uac2.c; then
+          echo "✅ Patch 2 is ALREADY APPLIED"
+        else
+          echo "❌ Patch 2 is MISSING"
+        fi
+        
+        echo ""
+        echo "=== Checking for Patch 3 (Adaptive endpoint) ==="
+        if grep -q "USB_ENDPOINT_SYNC_ADAPTIVE" drivers/usb/gadget/function/f_uac2.c; then
+          echo "✅ Patch 3 is ALREADY APPLIED"
+        else
+          echo "❌ Patch 3 is MISSING"
+        fi
+        
+        echo ""
+        echo "=== Checking for Patch 4 (Terminal types) ==="
+        if grep -q "TERMINAL_TYPE" drivers/usb/gadget/function/f_uac2.c; then
+          echo "✅ Patch 4 is ALREADY APPLIED"
+        else
+          echo "❌ Patch 4 is MISSING"
+        fi
+
     #--------------------------------------------------
     # 2. Checkout AnyKernel3
     #--------------------------------------------------
