@@ -19,26 +19,6 @@ jobs:
         path: kernel
 
     #--------------------------------------------------
-    # 1.5 Apply Windows UAC2 Compatibility Patches
-    #--------------------------------------------------
-    - name: Apply Windows UAC2 Patches
-      working-directory: ./kernel
-      run: |
-        echo "Applying Patch 1: wMaxPacketSize (+1 frame for Win10 enumeration)"
-        curl -sL https://github.com/torvalds/linux/commit/0560c9c552c1815e7b480bc11fd785fefc82bb27.patch | patch -p1
-        
-        echo "Applying Patch 2: SuperSpeed descriptors (fixes USB 3.0)"
-        curl -sL https://github.com/torvalds/linux/commit/f0e8a206a2a53a919e1709c654cb65d519f7befb.patch | patch -p1
-        
-        echo "Applying Patch 3: Adaptive OUT endpoint (no feedback endpoint needed)"
-        curl -sL https://git.seco.com/clea-os/bsp/rockchip/linux-seco-rk/-/commit/60767d93e50c5bc7e904eb217daa91fbd79c4853.patch | patch -p1
-        
-        echo "Applying Patch 4: Terminal types (Microphone/Speaker)"
-        curl -sL https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/patch/drivers?id=e9f9b877eb0ee6df626ac067ad428fdd689514f3 | patch -p1
-        
-        echo "✅ All Windows UAC2 patches applied successfully"
-
-    #--------------------------------------------------
     # 2. Checkout AnyKernel3
     #--------------------------------------------------
     - name: Clone AnyKernel3
