@@ -19,31 +19,65 @@ jobs:
         path: kernel
 
     #--------------------------------------------------
-    # 2. Apply 4 Necessary UAC2 Patches
+    # 2. Apply Official UAC2 Windows Patches (4 patches)
     #--------------------------------------------------
     - name: Apply UAC2 Windows Patches
       working-directory: ./kernel
       run: |
-        echo "=== Applying 4 UAC2 patches ==="
+        cat > uac2_win_fixes.patch << 'EOF'
+--- a/drivers/usb/gadget/function/f_uac2.c
++++ b/drivers/usb/gadget/function/f_uac2.c
+@@ -371,7 +371,7 @@ static struct usb_endpoint_descriptor fs_epout_desc = {
+ 	.bLength = USB_DT_ENDPOINT_SIZE,
+ 	.bDescriptorType = USB_DT_ENDPOINT,
+ 	.bEndpointAddress = USB_DIR_OUT,
+-	.bmAttributes = USB_ENDPOINT_XFER_ISOC | USB_ENDPOINT_SYNC_SYNC,
++	.bmAttributes = USB_ENDPOINT_XFER_ISOC | USB_ENDPOINT_SYNC_ADAPTIVE,
+ 	/* .wMaxPacketSize = DYNAMIC */
+ 	.bInterval = 4,
+ };
+@@ -393,7 +393,7 @@ static struct usb_endpoint_descriptor hs_epout_desc = {
+ 	.bLength = USB_DT_ENDPOINT_SIZE,
+ 	.bDescriptorType = USB_DT_ENDPOINT,
+ 	.bEndpointAddress = USB_DIR_OUT,
+-	.bmAttributes = USB_ENDPOINT_XFER_ISOC | USB_ENDPOINT_SYNC_SYNC,
++	.bmAttributes = USB_ENDPOINT_XFER_ISOC | USB_ENDPOINT_SYNC_ADAPTIVE,
+ 	/* .wMaxPacketSize = DYNAMIC */
+ 	.bInterval = 4,
+ };
+@@ -539,7 +539,7 @@ static int set_ep_max_packet_size(const struct f_uac2_opts *uac2_opts,
+ 
+ 	max_size_bw = num_channels(chmask) * ssize *
+ 		(uac2_opts->fb_max > 0 ? 1 : 0) +
+-		DIV_ROUND_UP(srate, factor / (1 << (ep_desc->bInterval - 1)));
++		(DIV_ROUND_UP(srate, factor / (1 << (ep_desc->bInterval - 1))) + 1);
+ 	ep_desc->wMaxPacketSize = cpu_to_le16(min_t(u16, max_size_bw,
+ 						    max_size_ep));
+ 
+@@ -721,8 +721,8 @@ static int afunc_bind(struct usb_configuration *cfg, struct usb_function *f)
+ 	usb_out_it_desc.bNrChannels = num_channels(uac2_opts->c_chmask);
+ 	usb_out_it_desc.bmChannelConfig = cpu_to_le32(uac2_opts->c_chmask);
+ 	usb_out_it_desc.iChannelNames = 0;
+-	usb_out_it_desc.wTerminalType = cpu_to_le16(UAC_TERMINAL_UNDEFINED);
+-	io_in_it_desc.wTerminalType = cpu_to_le16(UAC_TERMINAL_UNDEFINED);
++	usb_out_it_desc.wTerminalType = cpu_to_le16(UAC_TERMINAL_MICROPHONE);
++	io_in_it_desc.wTerminalType = cpu_to_le16(UAC_TERMINAL_SPEAKER);
+ 
+ 	/* AS AS Interface 1 - Playback */
+ 	usb_interface_desc(&as_in_if1_desc, &as_in_if1_desc,
+EOF
+        # Apply the patch
+        patch -p1 < uac2_win_fixes.patch
+        echo "✅ All 4 UAC2 patches applied successfully"
         
-        # PATCH 1: Change OUT endpoint SYNC -> ADAPTIVE (fixes Windows playback)
-        sed -i '377s/USB_ENDPOINT_SYNC_SYNC/USB_ENDPOINT_SYNC_ADAPTIVE/' drivers/usb/gadget/function/f_uac2.c
-        
-        # PATCH 2: Add +1 frame to wMaxPacketSize (fixes Windows enumeration)
-        sed -i '539s/cpu_to_le16(min_t(u16, max_size_bw,/cpu_to_le16(min_t(u16, max_size_bw, + 1,/' drivers/usb/gadget/function/f_uac2.c
-        
-        # PATCH 3: Set input terminal to MICROPHONE (fixes Windows mic detection)
-        sed -i 's/UAC_INPUT_TERMINAL_UNDEFINED/UAC_INPUT_TERMINAL_MICROPHONE/g' drivers/usb/gadget/function/f_uac2.c
-        
-        # PATCH 4: Set output terminal to SPEAKER (fixes Windows speaker detection)
-        sed -i 's/UAC_OUTPUT_TERMINAL_UNDEFINED/UAC_OUTPUT_TERMINAL_SPEAKER/g' drivers/usb/gadget/function/f_uac2.c
-        
+        # Verify patches were applied
+        echo ""
         echo "=== Verification ==="
         grep -q "SYNC_ADAPTIVE" drivers/usb/gadget/function/f_uac2.c && echo "✅ Patch 1: Adaptive endpoint"
-        grep -q "max_size_bw, + 1" drivers/usb/gadget/function/f_uac2.c && echo "✅ Patch 2: +1 frame"
-        grep -q "UAC_INPUT_TERMINAL_MICROPHONE" drivers/usb/gadget/function/f_uac2.c && echo "✅ Patch 3: Microphone terminal"
-        grep -q "UAC_OUTPUT_TERMINAL_SPEAKER" drivers/usb/gadget/function/f_uac2.c && echo "✅ Patch 4: Speaker terminal"
-        echo "=== All 4 patches applied ==="
+        grep -q "DIV_ROUND_UP.*+ 1" drivers/usb/gadget/function/f_uac2.c && echo "✅ Patch 2: +1 frame"
+        grep -q "UAC_TERMINAL_MICROPHONE" drivers/usb/gadget/function/f_uac2.c && echo "✅ Patch 3: Microphone terminal"
+        grep -q "UAC_TERMINAL_SPEAKER" drivers/usb/gadget/function/f_uac2.c && echo "✅ Patch 4: Speaker terminal"
+        echo "========================="
 
     #--------------------------------------------------
     # 3. Checkout AnyKernel3
@@ -101,7 +135,7 @@ jobs:
         echo "CLANG_TRIPLE=aarch64-linux-gnu-" >> $GITHUB_ENV
 
     #--------------------------------------------------
-    # 8. Configure Kernel
+    # 8. Configure Kernel (Enable UAC2)
     #--------------------------------------------------
     - name: Configure Kernel
       run: |
@@ -136,7 +170,21 @@ jobs:
           Image.gz dtbo.img
 
     #--------------------------------------------------
-    # 10. Package Kernel
+    # 10. Fix AnyKernel3 for Miatoll
+    #--------------------------------------------------
+    - name: Fix AnyKernel3 Configuration
+      run: |
+        cd AnyKernel3
+        sed -i 's/device.name1=.*/device.name1=miatoll/' anykernel.sh
+        sed -i 's/device.name2=.*/device.name2=joyeuse/' anykernel.sh
+        sed -i 's/device.name3=.*/device.name3=curtana/' anykernel.sh
+        sed -i 's/device.name4=.*/device.name4=gram/' anykernel.sh
+        sed -i 's|block=/dev/block/platform/omap/omap_hsmmc.0/by-name/boot;|block=/dev/block/by-name/boot;|' anykernel.sh
+        sed -i 's/is_slot_device=.*/is_slot_device=0;/' anykernel.sh
+        echo "✅ AnyKernel3 configured for Miatoll"
+
+    #--------------------------------------------------
+    # 11. Package Kernel
     #--------------------------------------------------
     - name: Package Kernel
       run: |
@@ -152,7 +200,7 @@ jobs:
         echo "✅ Kernel package created successfully"
 
     #--------------------------------------------------
-    # 11. Upload Artifact
+    # 12. Upload Artifact
     #--------------------------------------------------
     - name: Upload Kernel Zip
       uses: actions/upload-artifact@v4
