@@ -8,6 +8,9 @@ jobs:
     runs-on: ubuntu-22.04
 
     steps:
+    #--------------------------------------------------
+    # 1. Checkout Kernel Source
+    #--------------------------------------------------
     - name: Clone Kernel Source
       uses: actions/checkout@v4
       with:
@@ -15,7 +18,32 @@ jobs:
         ref: kinesis-v29
         path: kernel
 
-    - name: Apply Windows UAC2 Patches (Complete - All 4 Fixes)
+    #--------------------------------------------------
+    # 2. Debug - See what's actually in f_uac2.c
+    #--------------------------------------------------
+    - name: Debug f_uac2.c - Check current state
+      working-directory: ./kernel
+      run: |
+        echo "=== Current f_uac2.c contents (relevant sections) ==="
+        echo ""
+        echo "--- Endpoint sync types ---"
+        grep -n "USB_ENDPOINT_SYNC_" drivers/usb/gadget/function/f_uac2.c | head -20
+        echo ""
+        echo "--- wMaxPacketSize calculations ---"
+        grep -n "wMaxPacketSize" drivers/usb/gadget/function/f_uac2.c | head -20
+        echo ""
+        echo "--- Terminal types ---"
+        grep -n "TERMINAL_TYPE" drivers/usb/gadget/function/f_uac2.c | head -20
+        echo ""
+        echo "--- Audio control interface (look for uac2_opts) ---"
+        grep -n "uac2_opts\|p_uac2" drivers/usb/gadget/function/f_uac2.c | head -20
+        echo ""
+        echo "=== End of debug output ==="
+
+    #--------------------------------------------------
+    # 3. Apply Windows UAC2 Patches (Attempt 1)
+    #--------------------------------------------------
+    - name: Apply Windows UAC2 Patches
       working-directory: ./kernel
       run: |
         echo "=== Applying Windows UAC2 Compatibility Fixes ==="
@@ -31,54 +59,36 @@ jobs:
         # Patch 4: Set proper terminal types
         echo "Applying Patch 4 (Terminal types)..."
         curl -sL https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/patch/drivers?id=e9f9b877eb0ee6df626ac067ad428fdd689514f3 | patch -p1 --fuzz=3 --ignore-whitespace || true
-        
-        echo ""
-        echo "=== Applying manual fallbacks (guaranteed to work) ==="
-        
-        # Manual fallback for wMaxPacketSize (Patch 1)
-        echo "Applying manual wMaxPacketSize fix (+1 frame for Windows)..."
-        sed -i 's/fs_epout_desc\.wMaxPacketSize = cpu_to_le16(\([^)]*\))/fs_epout_desc.wMaxPacketSize = cpu_to_le16(\1 + 1)/' drivers/usb/gadget/function/f_uac2.c
-        sed -i 's/hs_epout_desc\.wMaxPacketSize = cpu_to_le16(\([^)]*\))/hs_epout_desc.wMaxPacketSize = cpu_to_le16(\1 + 1)/' drivers/usb/gadget/function/f_uac2.c
-        sed -i 's/ss_epout_desc\.wMaxPacketSize = cpu_to_le16(\([^)]*\))/ss_epout_desc.wMaxPacketSize = cpu_to_le16(\1 + 1)/' drivers/usb/gadget/function/f_uac2.c
-        
-        # Manual fallback for adaptive endpoint (Patch 3)
-        echo "Applying manual adaptive endpoint fix..."
-        sed -i 's/USB_ENDPOINT_SYNC_ASYNC/USB_ENDPOINT_SYNC_ADAPTIVE/g' drivers/usb/gadget/function/f_uac2.c
-        
-        # Manual fallback for terminal types (Patch 4)
-        echo "Applying manual terminal type fix..."
-        sed -i 's/TERMINAL_TYPE_UNDEFINED/TERMINAL_TYPE_MICROPHONE/g' drivers/usb/gadget/function/f_uac2.c
-        sed -i 's/TERMINAL_TYPE_UNDEFINED/TERMINAL_TYPE_SPEAKER/g' drivers/usb/gadget/function/f_uac2.c
-        
-        echo ""
-        echo "=== Verifying all fixes were applied ==="
-        
-        if grep -q "cpu_to_le16(.* + 1)" drivers/usb/gadget/function/f_uac2.c; then
-          echo "✅ wMaxPacketSize fix applied"
-        else
-          echo "⚠️ wMaxPacketSize fix may need manual review"
-        fi
-        
-        if grep -q "USB_ENDPOINT_SYNC_ADAPTIVE" drivers/usb/gadget/function/f_uac2.c; then
-          echo "✅ Adaptive endpoint fix applied"
-        else
-          echo "⚠️ Adaptive endpoint fix missing"
-        fi
-        
-        if grep -q "TERMINAL_TYPE_MICROPHONE" drivers/usb/gadget/function/f_uac2.c; then
-          echo "✅ Terminal type fix applied"
-        else
-          echo "⚠️ Terminal type fix missing"
-        fi
-        
-        echo "✅ All Windows UAC2 patches applied successfully"
 
+    #--------------------------------------------------
+    # 4. Debug Again - See what changed
+    #--------------------------------------------------
+    - name: Debug f_uac2.c - After patches
+      working-directory: ./kernel
+      run: |
+        echo "=== f_uac2.c AFTER patches ==="
+        echo ""
+        echo "--- Endpoint sync types ---"
+        grep -n "USB_ENDPOINT_SYNC_" drivers/usb/gadget/function/f_uac2.c | head -20
+        echo ""
+        echo "--- wMaxPacketSize calculations ---"
+        grep -n "wMaxPacketSize" drivers/usb/gadget/function/f_uac2.c | head -20
+        echo ""
+        echo "--- Terminal types ---"
+        grep -n "TERMINAL_TYPE" drivers/usb/gadget/function/f_uac2.c | head -20
+
+    #--------------------------------------------------
+    # 5. Checkout AnyKernel3
+    #--------------------------------------------------
     - name: Clone AnyKernel3
       uses: actions/checkout@v4
       with:
         repository: osm0sis/AnyKernel3
         path: AnyKernel3
 
+    #--------------------------------------------------
+    # 6. Install Dependencies
+    #--------------------------------------------------
     - name: Install Dependencies
       run: |
         sudo apt update
@@ -87,6 +97,9 @@ jobs:
           libncurses5-dev libncursesw5-dev \
           zip unzip python3 ccache xz-utils
 
+    #--------------------------------------------------
+    # 7. Setup LLVM 17 Toolchain
+    #--------------------------------------------------
     - name: Setup LLVM 17
       run: |
         mkdir -p toolchains
@@ -96,6 +109,9 @@ jobs:
         mv clang+llvm-17.0.2-x86_64-linux-gnu-ubuntu-22.04 clang
         rm clang+llvm-17.0.2-x86_64-linux-gnu-ubuntu-22.04.tar.xz
 
+    #--------------------------------------------------
+    # 8. Setup GCC Toolchains
+    #--------------------------------------------------
     - name: Setup GCC Toolchains
       run: |
         cd toolchains
@@ -106,6 +122,9 @@ jobs:
         tar -xf gcc32.tar.gz
         mv android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9-* gcc32
 
+    #--------------------------------------------------
+    # 9. Export Environment Variables
+    #--------------------------------------------------
     - name: Set Environment Variables
       run: |
         echo "PATH=$GITHUB_WORKSPACE/toolchains/clang/bin:$GITHUB_WORKSPACE/toolchains/gcc64/bin:$GITHUB_WORKSPACE/toolchains/gcc32/bin:$PATH" >> $GITHUB_ENV
@@ -113,6 +132,9 @@ jobs:
         echo "CROSS_COMPILE_ARM32=arm-linux-androideabi-" >> $GITHUB_ENV
         echo "CLANG_TRIPLE=aarch64-linux-gnu-" >> $GITHUB_ENV
 
+    #--------------------------------------------------
+    # 10. Configure Kernel (Enable UAC2)
+    #--------------------------------------------------
     - name: Configure Kernel
       run: |
         DEFCONFIG=kernel/arch/arm64/configs/vendor/xiaomi/miatoll_defconfig
@@ -121,6 +143,9 @@ jobs:
         echo "CONFIG_USB_G_AUDIO=y" >> $DEFCONFIG
         echo "# CONFIG_COMPAT_VDSO is not set" >> $DEFCONFIG
 
+    #--------------------------------------------------
+    # 11. Build Kernel with LLVM 17
+    #--------------------------------------------------
     - name: Build Kernel
       run: |
         cd kernel
@@ -142,6 +167,9 @@ jobs:
           LLVM_IAS=1 \
           Image.gz dtbo.img
 
+    #--------------------------------------------------
+    # 12. Fix AnyKernel3 for Miatoll
+    #--------------------------------------------------
     - name: Fix AnyKernel3 Configuration
       run: |
         cd AnyKernel3
@@ -152,6 +180,9 @@ jobs:
         sed -i 's|BLOCK=.*|BLOCK=/dev/block/by-name/boot;|' anykernel.sh
         sed -i 's/IS_SLOT_DEVICE=.*/IS_SLOT_DEVICE=0;/' anykernel.sh
 
+    #--------------------------------------------------
+    # 13. Package Kernel
+    #--------------------------------------------------
     - name: Package Kernel
       run: |
         if [ ! -f kernel/out/arch/arm64/boot/Image.gz ]; then
@@ -165,6 +196,9 @@ jobs:
         zip -r9 ../Xiaomi_Miatoll_UAC2_$(date +%Y%m%d-%H%M%S).zip * -x .git README.md .gitignore
         echo "✅ Kernel package created successfully"
 
+    #--------------------------------------------------
+    # 14. Upload Artifact
+    #--------------------------------------------------
     - name: Upload Kernel Zip
       uses: actions/upload-artifact@v4
       with:
