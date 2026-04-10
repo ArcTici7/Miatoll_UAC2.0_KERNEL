@@ -9,17 +9,17 @@ jobs:
 
     steps:
     #--------------------------------------------------
-    # 1. Checkout Kernel Source
+    # 1. Checkout Kernel Source (Official LineageOS)
     #--------------------------------------------------
     - name: Clone Kernel Source
       uses: actions/checkout@v4
       with:
-        repository: clarencelol/kernel_xiaomi_sm6250
-        ref: kinesis-v29
+        repository: LineageOS/android_kernel_xiaomi_sm6250
+        ref: lineage-21
         path: kernel
 
     #--------------------------------------------------
-    # 2. Apply Official UAC2 Windows Patches (4 patches)
+    # 2. Apply 4 UAC2 Windows Patches
     #--------------------------------------------------
     - name: Apply UAC2 Windows Patches
       working-directory: ./kernel
@@ -27,10 +27,10 @@ jobs:
         echo "=== Applying 4 UAC2 patches ==="
         
         # PATCH 1: Change OUT endpoint SYNC -> ADAPTIVE
-        sed -i '377s/USB_ENDPOINT_SYNC_SYNC/USB_ENDPOINT_SYNC_ADAPTIVE/' drivers/usb/gadget/function/f_uac2.c
+        sed -i 's/USB_ENDPOINT_SYNC_SYNC/USB_ENDPOINT_SYNC_ADAPTIVE/g' drivers/usb/gadget/function/f_uac2.c
         
         # PATCH 2: Add +1 frame to wMaxPacketSize
-        sed -i '539s/cpu_to_le16(min_t(u16, max_size_bw,/cpu_to_le16(min_t(u16, max_size_bw, + 1,/' drivers/usb/gadget/function/f_uac2.c
+        sed -i 's/cpu_to_le16(min_t(u16, max_size_bw,/cpu_to_le16(min_t(u16, max_size_bw, + 1,/' drivers/usb/gadget/function/f_uac2.c
         
         # PATCH 3: Set input terminal to MICROPHONE
         sed -i 's/UAC_INPUT_TERMINAL_UNDEFINED/UAC_INPUT_TERMINAL_MICROPHONE/g' drivers/usb/gadget/function/f_uac2.c
@@ -101,24 +101,18 @@ jobs:
         echo "CLANG_TRIPLE=aarch64-linux-gnu-" >> $GITHUB_ENV
 
     #--------------------------------------------------
-    # 8. Configure Kernel
-    #--------------------------------------------------
-    - name: Configure Kernel
-      run: |
-        DEFCONFIG=kernel/arch/arm64/configs/vendor/xiaomi/miatoll_defconfig
-        echo "CONFIG_USB_CONFIGFS_F_UAC2=y" >> $DEFCONFIG
-        echo "CONFIG_USB_CONFIGFS_F_UAC1=y" >> $DEFCONFIG
-        echo "CONFIG_USB_G_AUDIO=y" >> $DEFCONFIG
-        echo "# CONFIG_COMPAT_VDSO is not set" >> $DEFCONFIG
-
-    #--------------------------------------------------
-    # 9. Build Kernel with LLVM 17
+    # 8. Configure and Build Kernel
     #--------------------------------------------------
     - name: Build Kernel
+      working-directory: ./kernel
       run: |
-        cd kernel
+        # Generate defconfig using the correct path
         make O=out ARCH=arm64 vendor/xiaomi/miatoll_defconfig
-        scripts/config --file out/.config --disable CONFIG_COMPAT_VDSO
+        
+        # Disable COMPAT_VDSO (fixes objcopy error)
+        scripts/config --file out/.config --disable CONFIG_COMPAT_VDSO 2>/dev/null || true
+        
+        # Build with LLVM 17
         make -j$(nproc) O=out \
           ARCH=arm64 \
           CC=clang \
@@ -136,7 +130,7 @@ jobs:
           Image.gz dtbo.img
 
     #--------------------------------------------------
-    # 10. Fix AnyKernel3 for Miatoll
+    # 9. Fix AnyKernel3 for Miatoll
     #--------------------------------------------------
     - name: Fix AnyKernel3 Configuration
       run: |
@@ -150,7 +144,7 @@ jobs:
         echo "✅ AnyKernel3 configured for Miatoll"
 
     #--------------------------------------------------
-    # 11. Package Kernel
+    # 10. Package Kernel
     #--------------------------------------------------
     - name: Package Kernel
       run: |
@@ -166,7 +160,7 @@ jobs:
         echo "✅ Kernel package created successfully"
 
     #--------------------------------------------------
-    # 12. Upload Artifact
+    # 11. Upload Artifact
     #--------------------------------------------------
     - name: Upload Kernel Zip
       uses: actions/upload-artifact@v4
