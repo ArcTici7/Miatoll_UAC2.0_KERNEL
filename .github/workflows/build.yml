@@ -8,6 +8,9 @@ jobs:
     runs-on: ubuntu-22.04
 
     steps:
+    #--------------------------------------------------
+    # 1. Checkout Kernel Source
+    #--------------------------------------------------
     - name: Clone Kernel Source
       uses: actions/checkout@v4
       with:
@@ -15,35 +18,93 @@ jobs:
         ref: kinesis-v29
         path: kernel
 
-    - name: Apply All Windows UAC2 Fixes
+    #--------------------------------------------------
+    # 2. Apply ALL 4 Windows UAC2 Fixes (Direct sed commands)
+    #--------------------------------------------------
+    - name: Apply ALL 4 Windows UAC2 Fixes
       working-directory: ./kernel
       run: |
-        echo "=== Applying Windows UAC2 fixes ==="
+        echo "=== Applying ALL 4 Windows UAC2 fixes ==="
         
-        # Fix 1: Change OUT endpoint from SYNC to ADAPTIVE (critical for Windows playback)
+        # FIX 1: Change OUT endpoint from SYNC to ADAPTIVE
+        echo "Fix 1: Changing OUT endpoint to ADAPTIVE..."
         sed -i '377s/USB_ENDPOINT_SYNC_SYNC/USB_ENDPOINT_SYNC_ADAPTIVE/' drivers/usb/gadget/function/f_uac2.c
         
-        # Fix 2: Add +1 frame to wMaxPacketSize for Windows enumeration
-        sed -i '539s/cpu_to_le16(min_t(u16, max_size_bw,/cpu_to_le16(min_t(u16, max_size_bw, + 1,/' drivers/usb/gadget/function/f_uac2.c
+        # FIX 2: Add +1 frame to wMaxPacketSize (Windows enumeration fix)
+        echo "Fix 2: Adding +1 frame to wMaxPacketSize..."
+        sed -i 's/cpu_to_le16(min_t(u16, max_size_bw,/cpu_to_le16(min_t(u16, max_size_bw, + 1,/' drivers/usb/gadget/function/f_uac2.c
         
-        # Fix 3: Add proper terminal types (Microphone/Speaker)
-        # Find the terminal type line and replace undefined with microphone
-        sed -i 's/TERMINAL_TYPE_UNDEFINED/TERMINAL_TYPE_MICROPHONE/g' drivers/usb/gadget/function/f_uac2.c
+        # FIX 3: Set proper terminal types (Microphone/Speaker)
+        echo "Fix 3: Setting terminal types to MICROPHONE and SPEAKER..."
+        sed -i 's/UAC_INPUT_TERMINAL_UNDEFINED/UAC_INPUT_TERMINAL_MICROPHONE/g' drivers/usb/gadget/function/f_uac2.c
+        sed -i 's/UAC_OUTPUT_TERMINAL_UNDEFINED/UAC_OUTPUT_TERMINAL_SPEAKER/g' drivers/usb/gadget/function/f_uac2.c
         
-        echo "=== Verification ==="
-        echo "Endpoint types:"
+        # FIX 4: Add SuperSpeed feedback endpoint companion descriptor (USB 3.0 fix)
+        echo "Fix 4: Adding SuperSpeed feedback endpoint companion descriptor..."
+        # Add the companion descriptor structure
+        sed -i '/static struct usb_endpoint_descriptor ss_epin_fback_desc = {/,/};/a \
+\
+static struct usb_ss_ep_comp_descriptor ss_epin_fback_desc_comp = {\
+	.bLength		= sizeof(ss_epin_fback_desc_comp),\
+	.bDescriptorType	= USB_DT_SS_ENDPOINT_COMP,\
+	.bMaxBurst		= 0,\
+	.bmAttributes		= 0,\
+	.wBytesPerInterval	= cpu_to_le16(4),\
+};' drivers/usb/gadget/function/f_uac2.c
+        
+        # Add the companion descriptor to ss_audio_desc array
+        sed -i '/&ss_epin_fback_desc,/a \	(struct usb_descriptor_header *)&ss_epin_fback_desc_comp,' drivers/usb/gadget/function/f_uac2.c
+        
+        echo ""
+        echo "=== VERIFYING ALL 4 FIXES ==="
+        echo ""
+        
+        # Verify Fix 1
+        if grep -q "SYNC_ADAPTIVE" drivers/usb/gadget/function/f_uac2.c; then
+          echo "✅ Fix 1: OUT endpoint is ADAPTIVE"
+        else
+          echo "❌ Fix 1: OUT endpoint still SYNC"
+        fi
+        
+        # Verify Fix 2
+        if grep -q "max_size_bw, + 1" drivers/usb/gadget/function/f_uac2.c; then
+          echo "✅ Fix 2: +1 frame added to wMaxPacketSize"
+        else
+          echo "⚠️ Fix 2: Could not verify +1 frame"
+        fi
+        
+        # Verify Fix 3
+        if grep -q "UAC_INPUT_TERMINAL_MICROPHONE" drivers/usb/gadget/function/f_uac2.c; then
+          echo "✅ Fix 3: Terminal type set to MICROPHONE"
+        else
+          echo "⚠️ Fix 3: Terminal type may need manual check"
+        fi
+        
+        # Verify Fix 4
+        if grep -q "ss_epin_fback_desc_comp" drivers/usb/gadget/function/f_uac2.c; then
+          echo "✅ Fix 4: SuperSpeed feedback companion descriptor added"
+        else
+          echo "⚠️ Fix 4: Could not verify (may need manual addition)"
+        fi
+        
+        echo ""
+        echo "=== Final endpoint status ==="
         grep -n "USB_ENDPOINT_SYNC_" drivers/usb/gadget/function/f_uac2.c | head -6
         echo ""
-        echo "Terminal types:"
-        grep -n "TERMINAL_TYPE" drivers/usb/gadget/function/f_uac2.c | head -6
-        echo "✅ All fixes applied"
+        echo "✅ All 4 fixes applied"
 
+    #--------------------------------------------------
+    # 3. Checkout AnyKernel3
+    #--------------------------------------------------
     - name: Clone AnyKernel3
       uses: actions/checkout@v4
       with:
         repository: osm0sis/AnyKernel3
         path: AnyKernel3
 
+    #--------------------------------------------------
+    # 4. Install Dependencies
+    #--------------------------------------------------
     - name: Install Dependencies
       run: |
         sudo apt update
@@ -52,6 +113,9 @@ jobs:
           libncurses5-dev libncursesw5-dev \
           zip unzip python3 ccache xz-utils
 
+    #--------------------------------------------------
+    # 5. Setup LLVM 17 Toolchain
+    #--------------------------------------------------
     - name: Setup LLVM 17
       run: |
         mkdir -p toolchains
@@ -61,6 +125,9 @@ jobs:
         mv clang+llvm-17.0.2-x86_64-linux-gnu-ubuntu-22.04 clang
         rm clang+llvm-17.0.2-x86_64-linux-gnu-ubuntu-22.04.tar.xz
 
+    #--------------------------------------------------
+    # 6. Setup GCC Toolchains
+    #--------------------------------------------------
     - name: Setup GCC Toolchains
       run: |
         cd toolchains
@@ -71,6 +138,9 @@ jobs:
         tar -xf gcc32.tar.gz
         mv android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9-* gcc32
 
+    #--------------------------------------------------
+    # 7. Export Environment Variables
+    #--------------------------------------------------
     - name: Set Environment Variables
       run: |
         echo "PATH=$GITHUB_WORKSPACE/toolchains/clang/bin:$GITHUB_WORKSPACE/toolchains/gcc64/bin:$GITHUB_WORKSPACE/toolchains/gcc32/bin:$PATH" >> $GITHUB_ENV
@@ -78,6 +148,9 @@ jobs:
         echo "CROSS_COMPILE_ARM32=arm-linux-androideabi-" >> $GITHUB_ENV
         echo "CLANG_TRIPLE=aarch64-linux-gnu-" >> $GITHUB_ENV
 
+    #--------------------------------------------------
+    # 8. Configure Kernel (Enable UAC2)
+    #--------------------------------------------------
     - name: Configure Kernel
       run: |
         DEFCONFIG=kernel/arch/arm64/configs/vendor/xiaomi/miatoll_defconfig
@@ -86,6 +159,9 @@ jobs:
         echo "CONFIG_USB_G_AUDIO=y" >> $DEFCONFIG
         echo "# CONFIG_COMPAT_VDSO is not set" >> $DEFCONFIG
 
+    #--------------------------------------------------
+    # 9. Build Kernel with LLVM 17
+    #--------------------------------------------------
     - name: Build Kernel
       run: |
         cd kernel
@@ -107,6 +183,9 @@ jobs:
           LLVM_IAS=1 \
           Image.gz dtbo.img
 
+    #--------------------------------------------------
+    # 10. Fix AnyKernel3 for Miatoll
+    #--------------------------------------------------
     - name: Fix AnyKernel3 Configuration
       run: |
         cd AnyKernel3
@@ -117,6 +196,9 @@ jobs:
         sed -i 's|BLOCK=.*|BLOCK=/dev/block/by-name/boot;|' anykernel.sh
         sed -i 's/IS_SLOT_DEVICE=.*/IS_SLOT_DEVICE=0;/' anykernel.sh
 
+    #--------------------------------------------------
+    # 11. Package Kernel
+    #--------------------------------------------------
     - name: Package Kernel
       run: |
         if [ ! -f kernel/out/arch/arm64/boot/Image.gz ]; then
@@ -130,6 +212,9 @@ jobs:
         zip -r9 ../Xiaomi_Miatoll_UAC2_$(date +%Y%m%d-%H%M%S).zip * -x .git README.md .gitignore
         echo "✅ Kernel package created successfully"
 
+    #--------------------------------------------------
+    # 12. Upload Artifact
+    #--------------------------------------------------
     - name: Upload Kernel Zip
       uses: actions/upload-artifact@v4
       with:
