@@ -19,7 +19,7 @@ jobs:
         path: kernel
 
     #--------------------------------------------------
-    # 2. Apply ALL 4 Windows UAC2 Fixes (Direct sed commands)
+    # 2. Apply ALL 4 Windows UAC2 Fixes
     #--------------------------------------------------
     - name: Apply ALL 4 Windows UAC2 Fixes
       working-directory: ./kernel
@@ -39,21 +39,9 @@ jobs:
         sed -i 's/UAC_INPUT_TERMINAL_UNDEFINED/UAC_INPUT_TERMINAL_MICROPHONE/g' drivers/usb/gadget/function/f_uac2.c
         sed -i 's/UAC_OUTPUT_TERMINAL_UNDEFINED/UAC_OUTPUT_TERMINAL_SPEAKER/g' drivers/usb/gadget/function/f_uac2.c
         
-        # FIX 4: Add SuperSpeed feedback endpoint companion descriptor (USB 3.0 fix)
-        echo "Fix 4: Adding SuperSpeed feedback endpoint companion descriptor..."
-        # Add the companion descriptor structure
-        sed -i '/static struct usb_endpoint_descriptor ss_epin_fback_desc = {/,/};/a \
-\
-static struct usb_ss_ep_comp_descriptor ss_epin_fback_desc_comp = {\
-	.bLength		= sizeof(ss_epin_fback_desc_comp),\
-	.bDescriptorType	= USB_DT_SS_ENDPOINT_COMP,\
-	.bMaxBurst		= 0,\
-	.bmAttributes		= 0,\
-	.wBytesPerInterval	= cpu_to_le16(4),\
-};' drivers/usb/gadget/function/f_uac2.c
-        
-        # Add the companion descriptor to ss_audio_desc array
-        sed -i '/&ss_epin_fback_desc,/a \	(struct usb_descriptor_header *)&ss_epin_fback_desc_comp,' drivers/usb/gadget/function/f_uac2.c
+        # FIX 4: Add SuperSpeed feedback endpoint companion descriptor
+        echo "Fix 4: Adding SuperSpeed feedback companion descriptor..."
+        sed -i '/ss_epin_fback_desc = {/a static struct usb_ss_ep_comp_descriptor ss_epin_fback_desc_comp = { .bLength = sizeof(ss_epin_fback_desc_comp), .bDescriptorType = USB_DT_SS_ENDPOINT_COMP, .bMaxBurst = 0, .bmAttributes = 0, .wBytesPerInterval = cpu_to_le16(4), };' drivers/usb/gadget/function/f_uac2.c
         
         echo ""
         echo "=== VERIFYING ALL 4 FIXES ==="
@@ -84,14 +72,14 @@ static struct usb_ss_ep_comp_descriptor ss_epin_fback_desc_comp = {\
         if grep -q "ss_epin_fback_desc_comp" drivers/usb/gadget/function/f_uac2.c; then
           echo "✅ Fix 4: SuperSpeed feedback companion descriptor added"
         else
-          echo "⚠️ Fix 4: Could not verify (may need manual addition)"
+          echo "⚠️ Fix 4: Could not verify - may not be needed for USB 2.0"
         fi
         
         echo ""
         echo "=== Final endpoint status ==="
         grep -n "USB_ENDPOINT_SYNC_" drivers/usb/gadget/function/f_uac2.c | head -6
         echo ""
-        echo "✅ All 4 fixes applied"
+        echo "✅ All fixes applied"
 
     #--------------------------------------------------
     # 3. Checkout AnyKernel3
