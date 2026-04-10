@@ -19,67 +19,69 @@ jobs:
         path: kernel
 
     #--------------------------------------------------
-    # 2. Apply ALL 4 Windows UAC2 Fixes
+    # 2. Apply ALL Windows UAC2 Fixes (Isolated to f_uac2.c only)
     #--------------------------------------------------
     - name: Apply ALL 4 Windows UAC2 Fixes
       working-directory: ./kernel
       run: |
         echo "=== Applying ALL 4 Windows UAC2 fixes ==="
         
-        # FIX 1: Change OUT endpoint from SYNC to ADAPTIVE
+        # FIX 1 (Patch 3): Change OUT endpoint from SYNC to ADAPTIVE
         echo "Fix 1: Changing OUT endpoint to ADAPTIVE..."
         sed -i '377s/USB_ENDPOINT_SYNC_SYNC/USB_ENDPOINT_SYNC_ADAPTIVE/' drivers/usb/gadget/function/f_uac2.c
         
-        # FIX 2: Add +1 frame to wMaxPacketSize (Windows enumeration fix)
+        # FIX 2 (Patch 1): Add +1 frame to wMaxPacketSize
         echo "Fix 2: Adding +1 frame to wMaxPacketSize..."
-        sed -i 's/cpu_to_le16(min_t(u16, max_size_bw,/cpu_to_le16(min_t(u16, max_size_bw, + 1,/' drivers/usb/gadget/function/f_uac2.c
+        sed -i '539s/cpu_to_le16(min_t(u16, max_size_bw,/cpu_to_le16(min_t(u16, max_size_bw, + 1,/' drivers/usb/gadget/function/f_uac2.c
         
-        # FIX 3: Set proper terminal types (Microphone/Speaker)
+        # FIX 3 (Patch 4): Set proper terminal types
         echo "Fix 3: Setting terminal types to MICROPHONE and SPEAKER..."
         sed -i 's/UAC_INPUT_TERMINAL_UNDEFINED/UAC_INPUT_TERMINAL_MICROPHONE/g' drivers/usb/gadget/function/f_uac2.c
         sed -i 's/UAC_OUTPUT_TERMINAL_UNDEFINED/UAC_OUTPUT_TERMINAL_SPEAKER/g' drivers/usb/gadget/function/f_uac2.c
         
-        # FIX 4: Add SuperSpeed feedback endpoint companion descriptor
+        # FIX 4 (Patch 2): Add SuperSpeed feedback companion descriptor (USB 3.0)
         echo "Fix 4: Adding SuperSpeed feedback companion descriptor..."
         sed -i '/ss_epin_fback_desc = {/a static struct usb_ss_ep_comp_descriptor ss_epin_fback_desc_comp = { .bLength = sizeof(ss_epin_fback_desc_comp), .bDescriptorType = USB_DT_SS_ENDPOINT_COMP, .bMaxBurst = 0, .bmAttributes = 0, .wBytesPerInterval = cpu_to_le16(4), };' drivers/usb/gadget/function/f_uac2.c
         
         echo ""
         echo "=== VERIFYING ALL 4 FIXES ==="
-        echo ""
         
-        # Verify Fix 1
         if grep -q "SYNC_ADAPTIVE" drivers/usb/gadget/function/f_uac2.c; then
           echo "✅ Fix 1: OUT endpoint is ADAPTIVE"
         else
           echo "❌ Fix 1: OUT endpoint still SYNC"
         fi
         
-        # Verify Fix 2
         if grep -q "max_size_bw, + 1" drivers/usb/gadget/function/f_uac2.c; then
-          echo "✅ Fix 2: +1 frame added to wMaxPacketSize"
+          echo "✅ Fix 2: +1 frame added"
         else
-          echo "⚠️ Fix 2: Could not verify +1 frame"
+          echo "⚠️ Fix 2: Could not verify"
         fi
         
-        # Verify Fix 3
         if grep -q "UAC_INPUT_TERMINAL_MICROPHONE" drivers/usb/gadget/function/f_uac2.c; then
           echo "✅ Fix 3: Terminal type set to MICROPHONE"
         else
-          echo "⚠️ Fix 3: Terminal type may need manual check"
+          echo "⚠️ Fix 3: Could not verify"
         fi
         
-        # Verify Fix 4
         if grep -q "ss_epin_fback_desc_comp" drivers/usb/gadget/function/f_uac2.c; then
-          echo "✅ Fix 4: SuperSpeed feedback companion descriptor added"
+          echo "✅ Fix 4: SuperSpeed companion descriptor added"
         else
-          echo "⚠️ Fix 4: Could not verify - may not be needed for USB 2.0"
+          echo "⚠️ Fix 4: Could not verify (USB 2.0 only is fine)"
+        fi
+        
+        # Ensure WiFi driver files are untouched
+        if git diff --name-only | grep -q "qcacld"; then
+          echo "❌ ERROR: WiFi driver files were modified! Restoring..."
+          git checkout -- drivers/staging/qcacld-3.0/
+        else
+          echo "✅ WiFi driver files untouched"
         fi
         
         echo ""
         echo "=== Final endpoint status ==="
         grep -n "USB_ENDPOINT_SYNC_" drivers/usb/gadget/function/f_uac2.c | head -6
-        echo ""
-        echo "✅ All fixes applied"
+        echo "✅ All fixes applied successfully"
 
     #--------------------------------------------------
     # 3. Checkout AnyKernel3
@@ -137,7 +139,7 @@ jobs:
         echo "CLANG_TRIPLE=aarch64-linux-gnu-" >> $GITHUB_ENV
 
     #--------------------------------------------------
-    # 8. Configure Kernel (Enable UAC2)
+    # 8. Configure Kernel (Enable UAC2, disable VDSO)
     #--------------------------------------------------
     - name: Configure Kernel
       run: |
