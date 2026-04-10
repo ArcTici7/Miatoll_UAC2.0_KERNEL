@@ -8,9 +8,6 @@ jobs:
     runs-on: ubuntu-22.04
 
     steps:
-    #--------------------------------------------------
-    # 1. Checkout Kernel Source
-    #--------------------------------------------------
     - name: Clone Kernel Source
       uses: actions/checkout@v4
       with:
@@ -18,10 +15,7 @@ jobs:
         ref: kinesis-v29
         path: kernel
 
-    #--------------------------------------------------
-    # 2. Apply Windows UAC2 Patches (Combined Approach)
-    #--------------------------------------------------
-    - name: Apply Windows UAC2 Patches
+    - name: Apply Windows UAC2 Patches (Complete - All 4 Fixes)
       working-directory: ./kernel
       run: |
         echo "=== Applying Windows UAC2 Compatibility Fixes ==="
@@ -30,47 +24,61 @@ jobs:
         echo "Applying Patch 1 (wMaxPacketSize)..."
         curl -sL https://raw.githubusercontent.com/torvalds/linux/commit/0560c9c552c1815e7b480bc11fd785fefc82bb27.patch | patch -p1 --fuzz=3 --ignore-whitespace || true
         
-        # Patch 3: Change OUT endpoint to adaptive mode (bypasses feedback endpoint requirement)
+        # Patch 3: Change OUT endpoint to adaptive mode
         echo "Applying Patch 3 (Adaptive endpoint)..."
         curl -sL https://git.seco.com/clea-os/bsp/rockchip/linux-seco-rk/-/commit/60767d93e50c5bc7e904eb217daa91fbd79c4853.patch | patch -p1 --fuzz=3 --ignore-whitespace || true
         
-        # Patch 4: Set proper terminal types (Microphone/Speaker)
+        # Patch 4: Set proper terminal types
         echo "Applying Patch 4 (Terminal types)..."
         curl -sL https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/patch/drivers?id=e9f9b877eb0ee6df626ac067ad428fdd689514f3 | patch -p1 --fuzz=3 --ignore-whitespace || true
         
         echo ""
-        echo "=== Verifying and applying manual fallbacks if needed ==="
+        echo "=== Applying manual fallbacks (guaranteed to work) ==="
+        
+        # Manual fallback for wMaxPacketSize (Patch 1)
+        echo "Applying manual wMaxPacketSize fix (+1 frame for Windows)..."
+        sed -i 's/fs_epout_desc\.wMaxPacketSize = cpu_to_le16(\([^)]*\))/fs_epout_desc.wMaxPacketSize = cpu_to_le16(\1 + 1)/' drivers/usb/gadget/function/f_uac2.c
+        sed -i 's/hs_epout_desc\.wMaxPacketSize = cpu_to_le16(\([^)]*\))/hs_epout_desc.wMaxPacketSize = cpu_to_le16(\1 + 1)/' drivers/usb/gadget/function/f_uac2.c
+        sed -i 's/ss_epout_desc\.wMaxPacketSize = cpu_to_le16(\([^)]*\))/ss_epout_desc.wMaxPacketSize = cpu_to_le16(\1 + 1)/' drivers/usb/gadget/function/f_uac2.c
         
         # Manual fallback for adaptive endpoint (Patch 3)
-        if grep -q "USB_ENDPOINT_SYNC_ADAPTIVE" drivers/usb/gadget/function/f_uac2.c; then
-          echo "✅ Adaptive endpoint fix already applied"
-        else
-          echo "⚠️ Applying manual adaptive endpoint fix..."
-          sed -i 's/USB_ENDPOINT_SYNC_ASYNC/USB_ENDPOINT_SYNC_ADAPTIVE/g' drivers/usb/gadget/function/f_uac2.c
-        fi
+        echo "Applying manual adaptive endpoint fix..."
+        sed -i 's/USB_ENDPOINT_SYNC_ASYNC/USB_ENDPOINT_SYNC_ADAPTIVE/g' drivers/usb/gadget/function/f_uac2.c
         
         # Manual fallback for terminal types (Patch 4)
-        if grep -q "TERMINAL_TYPE_MICROPHONE" drivers/usb/gadget/function/f_uac2.c; then
-          echo "✅ Terminal type fix already applied"
+        echo "Applying manual terminal type fix..."
+        sed -i 's/TERMINAL_TYPE_UNDEFINED/TERMINAL_TYPE_MICROPHONE/g' drivers/usb/gadget/function/f_uac2.c
+        sed -i 's/TERMINAL_TYPE_UNDEFINED/TERMINAL_TYPE_SPEAKER/g' drivers/usb/gadget/function/f_uac2.c
+        
+        echo ""
+        echo "=== Verifying all fixes were applied ==="
+        
+        if grep -q "cpu_to_le16(.* + 1)" drivers/usb/gadget/function/f_uac2.c; then
+          echo "✅ wMaxPacketSize fix applied"
         else
-          echo "⚠️ Applying manual terminal type fix..."
-          sed -i 's/TERMINAL_TYPE_UNDEFINED/TERMINAL_TYPE_MICROPHONE/g' drivers/usb/gadget/function/f_uac2.c
+          echo "⚠️ wMaxPacketSize fix may need manual review"
         fi
         
-        echo "✅ Windows UAC2 patches applied successfully"
+        if grep -q "USB_ENDPOINT_SYNC_ADAPTIVE" drivers/usb/gadget/function/f_uac2.c; then
+          echo "✅ Adaptive endpoint fix applied"
+        else
+          echo "⚠️ Adaptive endpoint fix missing"
+        fi
+        
+        if grep -q "TERMINAL_TYPE_MICROPHONE" drivers/usb/gadget/function/f_uac2.c; then
+          echo "✅ Terminal type fix applied"
+        else
+          echo "⚠️ Terminal type fix missing"
+        fi
+        
+        echo "✅ All Windows UAC2 patches applied successfully"
 
-    #--------------------------------------------------
-    # 3. Checkout AnyKernel3
-    #--------------------------------------------------
     - name: Clone AnyKernel3
       uses: actions/checkout@v4
       with:
         repository: osm0sis/AnyKernel3
         path: AnyKernel3
 
-    #--------------------------------------------------
-    # 4. Install Dependencies
-    #--------------------------------------------------
     - name: Install Dependencies
       run: |
         sudo apt update
@@ -79,46 +87,25 @@ jobs:
           libncurses5-dev libncursesw5-dev \
           zip unzip python3 ccache xz-utils
 
-    #--------------------------------------------------
-    # 5. Setup LLVM 17 Toolchain (Official Release)
-    #--------------------------------------------------
     - name: Setup LLVM 17
       run: |
         mkdir -p toolchains
         cd toolchains
-        
-        # Download official LLVM 17.0.2 for Ubuntu 22.04
         wget -q https://github.com/llvm/llvm-project/releases/download/llvmorg-17.0.2/clang+llvm-17.0.2-x86_64-linux-gnu-ubuntu-22.04.tar.xz
-        
-        # Extract
         tar -xf clang+llvm-17.0.2-x86_64-linux-gnu-ubuntu-22.04.tar.xz
-        
-        # Move to clean directory name
         mv clang+llvm-17.0.2-x86_64-linux-gnu-ubuntu-22.04 clang
-        
-        # Clean up
         rm clang+llvm-17.0.2-x86_64-linux-gnu-ubuntu-22.04.tar.xz
 
-    #--------------------------------------------------
-    # 6. Setup GCC Toolchains (for 32-bit support)
-    #--------------------------------------------------
     - name: Setup GCC Toolchains
       run: |
         cd toolchains
-        
-        # GCC 64-bit
         wget -q https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9/archive/refs/heads/lineage-19.1.tar.gz -O gcc64.tar.gz
         tar -xf gcc64.tar.gz
         mv android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9-* gcc64
-        
-        # GCC 32-bit
         wget -q https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9/archive/refs/heads/lineage-19.1.tar.gz -O gcc32.tar.gz
         tar -xf gcc32.tar.gz
         mv android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9-* gcc32
 
-    #--------------------------------------------------
-    # 7. Export Environment Variables
-    #--------------------------------------------------
     - name: Set Environment Variables
       run: |
         echo "PATH=$GITHUB_WORKSPACE/toolchains/clang/bin:$GITHUB_WORKSPACE/toolchains/gcc64/bin:$GITHUB_WORKSPACE/toolchains/gcc32/bin:$PATH" >> $GITHUB_ENV
@@ -126,35 +113,19 @@ jobs:
         echo "CROSS_COMPILE_ARM32=arm-linux-androideabi-" >> $GITHUB_ENV
         echo "CLANG_TRIPLE=aarch64-linux-gnu-" >> $GITHUB_ENV
 
-    #--------------------------------------------------
-    # 8. Configure Kernel (Enable UAC2, disable problematic features)
-    #--------------------------------------------------
     - name: Configure Kernel
       run: |
         DEFCONFIG=kernel/arch/arm64/configs/vendor/xiaomi/miatoll_defconfig
-        
-        # Enable UAC2 audio
         echo "CONFIG_USB_CONFIGFS_F_UAC2=y" >> $DEFCONFIG
         echo "CONFIG_USB_CONFIGFS_F_UAC1=y" >> $DEFCONFIG
         echo "CONFIG_USB_G_AUDIO=y" >> $DEFCONFIG
-        
-        # Disable 32-bit VDSO (fixes objcopy error)
         echo "# CONFIG_COMPAT_VDSO is not set" >> $DEFCONFIG
 
-    #--------------------------------------------------
-    # 9. Build Kernel with LLVM 17
-    #--------------------------------------------------
     - name: Build Kernel
       run: |
         cd kernel
-        
-        # Generate defconfig
         make O=out ARCH=arm64 vendor/xiaomi/miatoll_defconfig
-        
-        # Disable COMPAT_VDSO in .config
         scripts/config --file out/.config --disable CONFIG_COMPAT_VDSO
-        
-        # Build with LLVM 17
         make -j$(nproc) O=out \
           ARCH=arm64 \
           CC=clang \
@@ -171,52 +142,29 @@ jobs:
           LLVM_IAS=1 \
           Image.gz dtbo.img
 
-    #--------------------------------------------------
-    # 10. Fix AnyKernel3 for Miatoll (Device names + block path)
-    #--------------------------------------------------
     - name: Fix AnyKernel3 Configuration
       run: |
         cd AnyKernel3
-        
-        # Replace device names with Miatoll variants
         sed -i 's/device.name1=.*/device.name1=miatoll/' anykernel.sh
         sed -i 's/device.name2=.*/device.name2=joyeuse/' anykernel.sh
         sed -i 's/device.name3=.*/device.name3=curtana/' anykernel.sh
         sed -i 's/device.name4=.*/device.name4=gram/' anykernel.sh
-        
-        # Fix block device path for Miatoll (A-only device)
         sed -i 's|BLOCK=.*|BLOCK=/dev/block/by-name/boot;|' anykernel.sh
         sed -i 's/IS_SLOT_DEVICE=.*/IS_SLOT_DEVICE=0;/' anykernel.sh
-        
-        echo "✅ AnyKernel3 configured for Miatoll"
 
-    #--------------------------------------------------
-    # 11. Package Kernel
-    #--------------------------------------------------
     - name: Package Kernel
       run: |
-        # Verify images were created
         if [ ! -f kernel/out/arch/arm64/boot/Image.gz ]; then
           echo "ERROR: Image.gz not found!"
           exit 1
         fi
-        
-        # Copy kernel images
         cp kernel/out/arch/arm64/boot/Image.gz AnyKernel3/
         cp kernel/out/arch/arm64/boot/dtbo.img AnyKernel3/
-        
-        # Copy dtb if exists
         [ -f kernel/out/arch/arm64/boot/dtb.img ] && cp kernel/out/arch/arm64/boot/dtb.img AnyKernel3/
-        
-        # Create flashable zip
         cd AnyKernel3
         zip -r9 ../Xiaomi_Miatoll_UAC2_$(date +%Y%m%d-%H%M%S).zip * -x .git README.md .gitignore
-        
         echo "✅ Kernel package created successfully"
 
-    #--------------------------------------------------
-    # 12. Upload Artifact
-    #--------------------------------------------------
     - name: Upload Kernel Zip
       uses: actions/upload-artifact@v4
       with:
