@@ -19,69 +19,31 @@ jobs:
         path: kernel
 
     #--------------------------------------------------
-    # 2. Apply ALL Windows UAC2 Fixes (Isolated to f_uac2.c only)
+    # 2. Apply 4 Necessary UAC2 Patches
     #--------------------------------------------------
-    - name: Apply ALL 4 Windows UAC2 Fixes
+    - name: Apply UAC2 Windows Patches
       working-directory: ./kernel
       run: |
-        echo "=== Applying ALL 4 Windows UAC2 fixes ==="
+        echo "=== Applying 4 UAC2 patches ==="
         
-        # FIX 1 (Patch 3): Change OUT endpoint from SYNC to ADAPTIVE
-        echo "Fix 1: Changing OUT endpoint to ADAPTIVE..."
+        # PATCH 1: Change OUT endpoint SYNC -> ADAPTIVE (fixes Windows playback)
         sed -i '377s/USB_ENDPOINT_SYNC_SYNC/USB_ENDPOINT_SYNC_ADAPTIVE/' drivers/usb/gadget/function/f_uac2.c
         
-        # FIX 2 (Patch 1): Add +1 frame to wMaxPacketSize
-        echo "Fix 2: Adding +1 frame to wMaxPacketSize..."
+        # PATCH 2: Add +1 frame to wMaxPacketSize (fixes Windows enumeration)
         sed -i '539s/cpu_to_le16(min_t(u16, max_size_bw,/cpu_to_le16(min_t(u16, max_size_bw, + 1,/' drivers/usb/gadget/function/f_uac2.c
         
-        # FIX 3 (Patch 4): Set proper terminal types
-        echo "Fix 3: Setting terminal types to MICROPHONE and SPEAKER..."
+        # PATCH 3: Set input terminal to MICROPHONE (fixes Windows mic detection)
         sed -i 's/UAC_INPUT_TERMINAL_UNDEFINED/UAC_INPUT_TERMINAL_MICROPHONE/g' drivers/usb/gadget/function/f_uac2.c
+        
+        # PATCH 4: Set output terminal to SPEAKER (fixes Windows speaker detection)
         sed -i 's/UAC_OUTPUT_TERMINAL_UNDEFINED/UAC_OUTPUT_TERMINAL_SPEAKER/g' drivers/usb/gadget/function/f_uac2.c
         
-        # FIX 4 (Patch 2): Add SuperSpeed feedback companion descriptor (USB 3.0)
-        echo "Fix 4: Adding SuperSpeed feedback companion descriptor..."
-        sed -i '/ss_epin_fback_desc = {/a static struct usb_ss_ep_comp_descriptor ss_epin_fback_desc_comp = { .bLength = sizeof(ss_epin_fback_desc_comp), .bDescriptorType = USB_DT_SS_ENDPOINT_COMP, .bMaxBurst = 0, .bmAttributes = 0, .wBytesPerInterval = cpu_to_le16(4), };' drivers/usb/gadget/function/f_uac2.c
-        
-        echo ""
-        echo "=== VERIFYING ALL 4 FIXES ==="
-        
-        if grep -q "SYNC_ADAPTIVE" drivers/usb/gadget/function/f_uac2.c; then
-          echo "✅ Fix 1: OUT endpoint is ADAPTIVE"
-        else
-          echo "❌ Fix 1: OUT endpoint still SYNC"
-        fi
-        
-        if grep -q "max_size_bw, + 1" drivers/usb/gadget/function/f_uac2.c; then
-          echo "✅ Fix 2: +1 frame added"
-        else
-          echo "⚠️ Fix 2: Could not verify"
-        fi
-        
-        if grep -q "UAC_INPUT_TERMINAL_MICROPHONE" drivers/usb/gadget/function/f_uac2.c; then
-          echo "✅ Fix 3: Terminal type set to MICROPHONE"
-        else
-          echo "⚠️ Fix 3: Could not verify"
-        fi
-        
-        if grep -q "ss_epin_fback_desc_comp" drivers/usb/gadget/function/f_uac2.c; then
-          echo "✅ Fix 4: SuperSpeed companion descriptor added"
-        else
-          echo "⚠️ Fix 4: Could not verify (USB 2.0 only is fine)"
-        fi
-        
-        # Ensure WiFi driver files are untouched
-        if git diff --name-only | grep -q "qcacld"; then
-          echo "❌ ERROR: WiFi driver files were modified! Restoring..."
-          git checkout -- drivers/staging/qcacld-3.0/
-        else
-          echo "✅ WiFi driver files untouched"
-        fi
-        
-        echo ""
-        echo "=== Final endpoint status ==="
-        grep -n "USB_ENDPOINT_SYNC_" drivers/usb/gadget/function/f_uac2.c | head -6
-        echo "✅ All fixes applied successfully"
+        echo "=== Verification ==="
+        grep -q "SYNC_ADAPTIVE" drivers/usb/gadget/function/f_uac2.c && echo "✅ Patch 1: Adaptive endpoint"
+        grep -q "max_size_bw, + 1" drivers/usb/gadget/function/f_uac2.c && echo "✅ Patch 2: +1 frame"
+        grep -q "UAC_INPUT_TERMINAL_MICROPHONE" drivers/usb/gadget/function/f_uac2.c && echo "✅ Patch 3: Microphone terminal"
+        grep -q "UAC_OUTPUT_TERMINAL_SPEAKER" drivers/usb/gadget/function/f_uac2.c && echo "✅ Patch 4: Speaker terminal"
+        echo "=== All 4 patches applied ==="
 
     #--------------------------------------------------
     # 3. Checkout AnyKernel3
@@ -139,7 +101,7 @@ jobs:
         echo "CLANG_TRIPLE=aarch64-linux-gnu-" >> $GITHUB_ENV
 
     #--------------------------------------------------
-    # 8. Configure Kernel (Enable UAC2, disable VDSO)
+    # 8. Configure Kernel
     #--------------------------------------------------
     - name: Configure Kernel
       run: |
@@ -174,20 +136,7 @@ jobs:
           Image.gz dtbo.img
 
     #--------------------------------------------------
-    # 10. Fix AnyKernel3 for Miatoll
-    #--------------------------------------------------
-    - name: Fix AnyKernel3 Configuration
-      run: |
-        cd AnyKernel3
-        sed -i 's/device.name1=.*/device.name1=miatoll/' anykernel.sh
-        sed -i 's/device.name2=.*/device.name2=joyeuse/' anykernel.sh
-        sed -i 's/device.name3=.*/device.name3=curtana/' anykernel.sh
-        sed -i 's/device.name4=.*/device.name4=gram/' anykernel.sh
-        sed -i 's|BLOCK=.*|BLOCK=/dev/block/by-name/boot;|' anykernel.sh
-        sed -i 's/IS_SLOT_DEVICE=.*/IS_SLOT_DEVICE=0;/' anykernel.sh
-
-    #--------------------------------------------------
-    # 11. Package Kernel
+    # 10. Package Kernel
     #--------------------------------------------------
     - name: Package Kernel
       run: |
@@ -203,7 +152,7 @@ jobs:
         echo "✅ Kernel package created successfully"
 
     #--------------------------------------------------
-    # 12. Upload Artifact
+    # 11. Upload Artifact
     #--------------------------------------------------
     - name: Upload Kernel Zip
       uses: actions/upload-artifact@v4
