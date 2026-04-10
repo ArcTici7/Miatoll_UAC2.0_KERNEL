@@ -8,70 +8,43 @@ jobs:
     runs-on: ubuntu-22.04
 
     steps:
-    #--------------------------------------------------
-    # 1. Checkout Kernel Source (LineageOS)
-    #--------------------------------------------------
     - name: Clone Kernel Source
       uses: actions/checkout@v4
       with:
-        repository: LineageOS/android_kernel_xiaomi_sm6250
-        ref: lineage-21
+        repository: clarencelol/kernel_xiaomi_sm6250
+        ref: kinesis-v29
         path: kernel
 
-    #--------------------------------------------------
-    # 2. Apply Patch 4 (Feedback Endpoint) with Safety Checks
-    #--------------------------------------------------
-    - name: Apply Feedback Endpoint Patch
+    - name: Apply Terminal Types Patch (Patch 3 Only)
       working-directory: ./kernel
       run: |
-        echo "=== Applying Feedback Endpoint Patch ==="
+        echo "=== Applying Terminal Types Patch ==="
         PATCH_FILE="drivers/usb/gadget/function/f_uac2.c"
         
-        # Check if the target line exists
-        if ! grep -q "ss_epin_fback_desc = {" "$PATCH_FILE"; then
-          echo "ERROR: Target line 'ss_epin_fback_desc = {' not found in $PATCH_FILE."
-          echo "The kernel source may have changed. Patch aborted."
+        # Check if the file exists
+        if [ ! -f "$PATCH_FILE" ]; then
+          echo "ERROR: $PATCH_FILE not found!"
           exit 1
         fi
         
-        # Add the companion descriptor
-        sed -i '/ss_epin_fback_desc = {/a static struct usb_ss_ep_comp_descriptor ss_epin_fback_desc_comp = { .bLength = sizeof(ss_epin_fback_desc_comp), .bDescriptorType = USB_DT_SS_ENDPOINT_COMP, .bMaxBurst = 0, .bmAttributes = 0, .wBytesPerInterval = cpu_to_le16(4), };' "$PATCH_FILE"
+        # Apply terminal type fixes (critical for Windows enumeration)
+        sed -i 's/UAC_INPUT_TERMINAL_UNDEFINED/UAC_INPUT_TERMINAL_MICROPHONE/g' "$PATCH_FILE"
+        sed -i 's/UAC_OUTPUT_TERMINAL_UNDEFINED/UAC_OUTPUT_TERMINAL_SPEAKER/g' "$PATCH_FILE"
         
-        # Check if the first sed command succeeded
-        if [ $? -ne 0 ]; then
-          echo "ERROR: Failed to add feedback endpoint descriptor."
-          exit 1
-        fi
-        
-        # Add it to the descriptor array
-        sed -i '/&ss_epin_fback_desc,/a \	(struct usb_descriptor_header *)&ss_epin_fback_desc_comp,' "$PATCH_FILE"
-        
-        # Check if the second sed command succeeded
-        if [ $? -ne 0 ]; then
-          echo "ERROR: Failed to add companion descriptor to array."
-          exit 1
-        fi
-        
-        # Verify the patch was applied
-        if grep -q "ss_epin_fback_desc_comp" "$PATCH_FILE"; then
-          echo "✅ Patch applied successfully"
+        # Verify
+        if grep -q "UAC_INPUT_TERMINAL_MICROPHONE" "$PATCH_FILE"; then
+          echo "✅ Terminal types patch applied successfully"
         else
           echo "❌ Patch verification failed"
           exit 1
         fi
 
-    #--------------------------------------------------
-    # 3. Checkout AnyKernel3
-    #--------------------------------------------------
     - name: Clone AnyKernel3
       uses: actions/checkout@v4
       with:
         repository: osm0sis/AnyKernel3
         path: AnyKernel3
 
-    #--------------------------------------------------
-    # 4. Install Dependencies
-    #--------------------------------------------------
     - name: Install Dependencies
       run: |
         sudo apt update
@@ -80,9 +53,6 @@ jobs:
           libncurses5-dev libncursesw5-dev \
           zip unzip python3 ccache xz-utils
 
-    #--------------------------------------------------
-    # 5. Setup LLVM 17 Toolchain
-    #--------------------------------------------------
     - name: Setup LLVM 17
       run: |
         mkdir -p toolchains
@@ -92,9 +62,6 @@ jobs:
         mv clang+llvm-17.0.2-x86_64-linux-gnu-ubuntu-22.04 clang
         rm clang+llvm-17.0.2-x86_64-linux-gnu-ubuntu-22.04.tar.xz
 
-    #--------------------------------------------------
-    # 6. Setup GCC Toolchains
-    #--------------------------------------------------
     - name: Setup GCC Toolchains
       run: |
         cd toolchains
@@ -105,9 +72,6 @@ jobs:
         tar -xf gcc32.tar.gz
         mv android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9-* gcc32
 
-    #--------------------------------------------------
-    # 7. Export Environment Variables
-    #--------------------------------------------------
     - name: Set Environment Variables
       run: |
         echo "PATH=$GITHUB_WORKSPACE/toolchains/clang/bin:$GITHUB_WORKSPACE/toolchains/gcc64/bin:$GITHUB_WORKSPACE/toolchains/gcc32/bin:$PATH" >> $GITHUB_ENV
@@ -115,9 +79,6 @@ jobs:
         echo "CROSS_COMPILE_ARM32=arm-linux-androideabi-" >> $GITHUB_ENV
         echo "CLANG_TRIPLE=aarch64-linux-gnu-" >> $GITHUB_ENV
 
-    #--------------------------------------------------
-    # 8. Configure Kernel
-    #--------------------------------------------------
     - name: Configure Kernel
       run: |
         DEFCONFIG=kernel/arch/arm64/configs/vendor/xiaomi/miatoll_defconfig
@@ -126,9 +87,6 @@ jobs:
         echo "CONFIG_USB_G_AUDIO=y" >> $DEFCONFIG
         echo "# CONFIG_COMPAT_VDSO is not set" >> $DEFCONFIG
 
-    #--------------------------------------------------
-    # 9. Build Kernel with LLVM 17
-    #--------------------------------------------------
     - name: Build Kernel
       run: |
         cd kernel
@@ -150,9 +108,6 @@ jobs:
           LLVM_IAS=1 \
           Image.gz dtbo.img
 
-    #--------------------------------------------------
-    # 10. Package Kernel
-    #--------------------------------------------------
     - name: Package Kernel
       run: |
         if [ ! -f kernel/out/arch/arm64/boot/Image.gz ]; then
@@ -166,9 +121,6 @@ jobs:
         zip -r9 ../Xiaomi_Miatoll_UAC2_$(date +%Y%m%d-%H%M%S).zip * -x .git README.md .gitignore
         echo "✅ Kernel package created successfully"
 
-    #--------------------------------------------------
-    # 11. Upload Artifact
-    #--------------------------------------------------
     - name: Upload Kernel Zip
       uses: actions/upload-artifact@v4
       with:
