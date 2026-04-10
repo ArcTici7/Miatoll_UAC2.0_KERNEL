@@ -9,85 +9,56 @@ jobs:
 
     steps:
     #--------------------------------------------------
-    # 1. Checkout Kernel Source
+    # 1. Checkout Kernel Source (LineageOS)
     #--------------------------------------------------
     - name: Clone Kernel Source
       uses: actions/checkout@v4
       with:
-        repository: clarencelol/kernel_xiaomi_sm6250
-        ref: kinesis-v29
+        repository: LineageOS/android_kernel_xiaomi_sm6250
+        ref: lineage-21
         path: kernel
 
     #--------------------------------------------------
-    # 2. Apply Patch 4 ONLY with Error Detection
+    # 2. Apply Patch 4 (Feedback Endpoint) with Safety Checks
     #--------------------------------------------------
-    - name: Apply Patch 4 - Feedback Endpoint
+    - name: Apply Feedback Endpoint Patch
       working-directory: ./kernel
       run: |
-        echo "=== Applying Patch 4: Feedback Endpoint for Windows UAC2 ==="
+        echo "=== Applying Feedback Endpoint Patch ==="
+        PATCH_FILE="drivers/usb/gadget/function/f_uac2.c"
         
-        # Check if f_uac2.c exists
-        if [ ! -f drivers/usb/gadget/function/f_uac2.c ]; then
-          echo "❌ ERROR: f_uac2.c not found! Patch cannot be applied."
+        # Check if the target line exists
+        if ! grep -q "ss_epin_fback_desc = {" "$PATCH_FILE"; then
+          echo "ERROR: Target line 'ss_epin_fback_desc = {' not found in $PATCH_FILE."
+          echo "The kernel source may have changed. Patch aborted."
           exit 1
         fi
         
-        # Check if the target line for the patch exists
-        if ! grep -q "ss_epin_fback_desc = {" drivers/usb/gadget/function/f_uac2.c; then
-          echo "❌ ERROR: Target line 'ss_epin_fback_desc = {' not found in f_uac2.c"
-          echo "   The kernel source may have changed. Patch aborted."
-          exit 1
-        fi
-        
-        echo "   Target found. Applying patch..."
-        
-        # Add the SuperSpeed feedback endpoint companion descriptor
-        sed -i '/ss_epin_fback_desc = {/a static struct usb_ss_ep_comp_descriptor ss_epin_fback_desc_comp = { .bLength = sizeof(ss_epin_fback_desc_comp), .bDescriptorType = USB_DT_SS_ENDPOINT_COMP, .bMaxBurst = 0, .bmAttributes = 0, .wBytesPerInterval = cpu_to_le16(4), };' drivers/usb/gadget/function/f_uac2.c
+        # Add the companion descriptor
+        sed -i '/ss_epin_fback_desc = {/a static struct usb_ss_ep_comp_descriptor ss_epin_fback_desc_comp = { .bLength = sizeof(ss_epin_fback_desc_comp), .bDescriptorType = USB_DT_SS_ENDPOINT_COMP, .bMaxBurst = 0, .bmAttributes = 0, .wBytesPerInterval = cpu_to_le16(4), };' "$PATCH_FILE"
         
         # Check if the first sed command succeeded
         if [ $? -ne 0 ]; then
-          echo "❌ ERROR: Failed to add feedback endpoint descriptor"
+          echo "ERROR: Failed to add feedback endpoint descriptor."
           exit 1
         fi
         
-        # Add the companion descriptor to the SS audio descriptor array
-        sed -i '/&ss_epin_fback_desc,/a \	(struct usb_descriptor_header *)&ss_epin_fback_desc_comp,' drivers/usb/gadget/function/f_uac2.c
+        # Add it to the descriptor array
+        sed -i '/&ss_epin_fback_desc,/a \	(struct usb_descriptor_header *)&ss_epin_fback_desc_comp,' "$PATCH_FILE"
         
         # Check if the second sed command succeeded
         if [ $? -ne 0 ]; then
-          echo "❌ ERROR: Failed to add companion descriptor to array"
+          echo "ERROR: Failed to add companion descriptor to array."
           exit 1
         fi
         
-        echo ""
-        echo "=== Verification ==="
-        
-        # Verify the patch was applied correctly
-        if grep -q "ss_epin_fback_desc_comp" drivers/usb/gadget/function/f_uac2.c; then
-          echo "✅ Patch 4: Feedback endpoint companion descriptor added"
+        # Verify the patch was applied
+        if grep -q "ss_epin_fback_desc_comp" "$PATCH_FILE"; then
+          echo "✅ Patch applied successfully"
         else
-          echo "❌ ERROR: Patch 4 verification failed - descriptor not found in file"
-          echo "   The sed command may have failed silently."
+          echo "❌ Patch verification failed"
           exit 1
         fi
-        
-        # Verify the companion descriptor was added to the array
-        if grep -A2 "&ss_epin_fback_desc," drivers/usb/gadget/function/f_uac2.c | grep -q "ss_epin_fback_desc_comp"; then
-          echo "✅ Patch 4: Companion descriptor added to SS audio array"
-        else
-          echo "❌ ERROR: Companion descriptor not found in SS audio array"
-          echo "   The second sed command may have failed."
-          exit 1
-        fi
-        
-        echo ""
-        echo "✅ Patch 4 applied successfully and verified"
-        echo ""
-        echo "=== Modified lines preview ==="
-        grep -B2 -A2 "ss_epin_fback_desc_comp" drivers/usb/gadget/function/f_uac2.c || echo "   (preview not available)"
-        
-        # Final success marker
-        echo "PATCH_4_SUCCESS=true" >> $GITHUB_ENV
 
     #--------------------------------------------------
     # 3. Checkout AnyKernel3
