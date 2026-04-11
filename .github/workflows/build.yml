@@ -30,15 +30,16 @@ jobs:
         libssl-dev libncurses5-dev libncursesw5-dev \
         zip unzip python3 ccache xz-utils file
 
-    # ---------------- CLANG ----------------
-    - name: Setup Clang
+    # ---------------- LLVM 17 (PROVEN WORKING) ----------------
+    - name: Setup LLVM 17
       run: |
-        mkdir -p toolchains && cd toolchains
+        mkdir -p toolchains/clang
+        cd toolchains/clang
         wget -q https://github.com/llvm/llvm-project/releases/download/llvmorg-17.0.2/clang+llvm-17.0.2-x86_64-linux-gnu-ubuntu-22.04.tar.xz
-        tar -xf clang*.tar.xz
-        mv clang+llvm* clang
+        tar -xf clang+llvm-17.0.2-x86_64-linux-gnu-ubuntu-22.04.tar.xz --strip-components=1
+        rm clang+llvm-17.0.2-x86_64-linux-gnu-ubuntu-22.04.tar.xz
 
-    # ---------------- GCC ARM32/64 ----------------
+    # ---------------- GCC TOOLCHAINS ----------------
     - name: Setup GCC
       run: |
         mkdir -p toolchains/gcc64 toolchains/gcc32
@@ -46,15 +47,17 @@ jobs:
         cd toolchains/gcc64
         wget -q https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9/archive/refs/heads/lineage-19.1.tar.gz -O gcc64.tar.gz
         tar -xf gcc64.tar.gz --strip-components=1
+        rm gcc64.tar.gz
 
         cd ../gcc32
         wget -q https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9/archive/refs/heads/lineage-19.1.tar.gz -O gcc32.tar.gz
         tar -xf gcc32.tar.gz --strip-components=1
+        rm gcc32.tar.gz
 
     # ---------------- ENV ----------------
     - name: Environment
       run: |
-        echo "PATH=$GITHUB_WORKSPACE/toolchains/clang/bin:$PATH" >> $GITHUB_ENV
+        echo "PATH=$GITHUB_WORKSPACE/toolchains/clang/bin:$GITHUB_WORKSPACE/toolchains/gcc64/bin:$GITHUB_WORKSPACE/toolchains/gcc32/bin:$PATH" >> $GITHUB_ENV
         echo "CROSS_COMPILE=aarch64-linux-android-" >> $GITHUB_ENV
         echo "CROSS_COMPILE_ARM32=arm-linux-androideabi-" >> $GITHUB_ENV
         echo "CLANG_TRIPLE=aarch64-linux-gnu-" >> $GITHUB_ENV
@@ -119,6 +122,17 @@ jobs:
           Image.gz dtbo.img
 
         test -f out/arch/arm64/boot/Image.gz
+
+    # ---------------- FIX ANYKERNEL3 FOR MIATOLL ----------------
+    - name: Fix AnyKernel3 for Miatoll
+      run: |
+        cd AnyKernel3
+        sed -i 's/device.name1=.*/device.name1=miatoll/' anykernel.sh
+        sed -i 's/device.name2=.*/device.name2=joyeuse/' anykernel.sh
+        sed -i 's/device.name3=.*/device.name3=curtana/' anykernel.sh
+        sed -i 's/device.name4=.*/device.name4=gram/' anykernel.sh
+        sed -i 's|block=/dev/block/platform/omap/omap_hsmmc.0/by-name/boot;|block=/dev/block/by-name/boot;|' anykernel.sh
+        sed -i 's/is_slot_device=.*/is_slot_device=0;/' anykernel.sh
 
     # ---------------- PACKAGE ----------------
     - name: Package
