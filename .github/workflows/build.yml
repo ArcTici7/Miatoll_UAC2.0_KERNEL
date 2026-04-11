@@ -1,4 +1,4 @@
-name: Build Xiaomi Miatoll Kernel (UAC2 Enabled)
+name: Miatoll USB DAC UAC2 (Stable Low Latency)
 
 on:
   workflow_dispatch:
@@ -8,90 +8,101 @@ jobs:
     runs-on: ubuntu-22.04
 
     steps:
-    - name: Clone Kernel Source
+    # ---------------- SOURCE ----------------
+    - name: Checkout Kernel
       uses: actions/checkout@v4
       with:
         repository: clarencelol/kernel_xiaomi_sm6250
         ref: kinesis-v29
         path: kernel
 
-    - name: Apply Terminal Types Patch (Patch 3 Only)
-      working-directory: ./kernel
-      run: |
-        echo "=== Applying Terminal Types Patch ==="
-        PATCH_FILE="drivers/usb/gadget/function/f_uac2.c"
-        
-        # Check if the file exists
-        if [ ! -f "$PATCH_FILE" ]; then
-          echo "ERROR: $PATCH_FILE not found!"
-          exit 1
-        fi
-        
-        # Apply terminal type fixes (critical for Windows enumeration)
-        sed -i 's/UAC_INPUT_TERMINAL_UNDEFINED/UAC_INPUT_TERMINAL_MICROPHONE/g' "$PATCH_FILE"
-        sed -i 's/UAC_OUTPUT_TERMINAL_UNDEFINED/UAC_OUTPUT_TERMINAL_SPEAKER/g' "$PATCH_FILE"
-        
-        # Verify
-        if grep -q "UAC_INPUT_TERMINAL_MICROPHONE" "$PATCH_FILE"; then
-          echo "✅ Terminal types patch applied successfully"
-        else
-          echo "❌ Patch verification failed"
-          exit 1
-        fi
-
-    - name: Clone AnyKernel3
+    - name: Checkout AnyKernel3
       uses: actions/checkout@v4
       with:
         repository: osm0sis/AnyKernel3
         path: AnyKernel3
 
-    - name: Install Dependencies
+    # ---------------- DEPENDENCIES ----------------
+    - name: Install deps
       run: |
         sudo apt update
-        sudo apt install -y \
-          git wget curl bc bison flex libssl-dev \
-          libncurses5-dev libncursesw5-dev \
-          zip unzip python3 ccache xz-utils
+        sudo apt install -y git wget curl bc bison flex \
+        libssl-dev libncurses5-dev libncursesw5-dev \
+        zip unzip python3 ccache xz-utils file
 
-    - name: Setup LLVM 17
+    # ---------------- CLANG ----------------
+    - name: Setup Clang
       run: |
-        mkdir -p toolchains
-        cd toolchains
+        mkdir -p toolchains && cd toolchains
         wget -q https://github.com/llvm/llvm-project/releases/download/llvmorg-17.0.2/clang+llvm-17.0.2-x86_64-linux-gnu-ubuntu-22.04.tar.xz
-        tar -xf clang+llvm-17.0.2-x86_64-linux-gnu-ubuntu-22.04.tar.xz
-        mv clang+llvm-17.0.2-x86_64-linux-gnu-ubuntu-22.04 clang
-        rm clang+llvm-17.0.2-x86_64-linux-gnu-ubuntu-22.04.tar.xz
+        tar -xf clang*.tar.xz
+        mv clang+llvm* clang
 
-    - name: Setup GCC Toolchains
+    # ---------------- GCC ARM32/64 ----------------
+    - name: Setup GCC
       run: |
-        cd toolchains
+        mkdir -p toolchains/gcc64 toolchains/gcc32
+
+        cd toolchains/gcc64
         wget -q https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9/archive/refs/heads/lineage-19.1.tar.gz -O gcc64.tar.gz
-        tar -xf gcc64.tar.gz
-        mv android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9-* gcc64
-        wget -q https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9/archive/refs/heads/lineage-19.1.tar.gz -O gcc32.tar.gz
-        tar -xf gcc32.tar.gz
-        mv android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9-* gcc32
+        tar -xf gcc64.tar.gz --strip-components=1
 
-    - name: Set Environment Variables
+        cd ../gcc32
+        wget -q https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9/archive/refs/heads/lineage-19.1.tar.gz -O gcc32.tar.gz
+        tar -xf gcc32.tar.gz --strip-components=1
+
+    # ---------------- ENV ----------------
+    - name: Environment
       run: |
-        echo "PATH=$GITHUB_WORKSPACE/toolchains/clang/bin:$GITHUB_WORKSPACE/toolchains/gcc64/bin:$GITHUB_WORKSPACE/toolchains/gcc32/bin:$PATH" >> $GITHUB_ENV
+        echo "PATH=$GITHUB_WORKSPACE/toolchains/clang/bin:$PATH" >> $GITHUB_ENV
         echo "CROSS_COMPILE=aarch64-linux-android-" >> $GITHUB_ENV
         echo "CROSS_COMPILE_ARM32=arm-linux-androideabi-" >> $GITHUB_ENV
         echo "CLANG_TRIPLE=aarch64-linux-gnu-" >> $GITHUB_ENV
 
-    - name: Configure Kernel
+    # ---------------- UAC2 FIX ----------------
+    - name: Fix UAC2 descriptors
+      working-directory: ./kernel
       run: |
-        DEFCONFIG=kernel/arch/arm64/configs/vendor/xiaomi/miatoll_defconfig
-        echo "CONFIG_USB_CONFIGFS_F_UAC2=y" >> $DEFCONFIG
-        echo "CONFIG_USB_CONFIGFS_F_UAC1=y" >> $DEFCONFIG
-        echo "CONFIG_USB_G_AUDIO=y" >> $DEFCONFIG
-        echo "# CONFIG_COMPAT_VDSO is not set" >> $DEFCONFIG
+        set -e
+        FILE="drivers/usb/gadget/function/f_uac2.c"
 
-    - name: Build Kernel
+        sed -i 's/UAC_INPUT_TERMINAL_UNDEFINED/UAC_INPUT_TERMINAL_MICROPHONE/g' "$FILE"
+        sed -i 's/UAC_OUTPUT_TERMINAL_UNDEFINED/UAC_OUTPUT_TERMINAL_SPEAKER/g' "$FILE"
+
+        grep -q MICROPHONE "$FILE"
+        grep -q SPEAKER "$FILE"
+
+    # ---------------- CONFIG ----------------
+    - name: Configure kernel
+      working-directory: ./kernel
       run: |
-        cd kernel
+        set -e
+
         make O=out ARCH=arm64 vendor/xiaomi/miatoll_defconfig
-        scripts/config --file out/.config --disable CONFIG_COMPAT_VDSO
+
+        # USB AUDIO GADGET
+        scripts/config --file out/.config --enable CONFIG_USB_CONFIGFS
+        scripts/config --file out/.config --enable CONFIG_USB_CONFIGFS_F_UAC2
+        scripts/config --file out/.config --enable CONFIG_USB_CONFIGFS_F_UAC1
+        scripts/config --file out/.config --enable CONFIG_USB_G_AUDIO
+        scripts/config --file out/.config --enable CONFIG_SND_USB_AUDIO
+
+        # LOW LATENCY SAFE SETTINGS
+        scripts/config --file out/.config --enable CONFIG_PREEMPT
+        scripts/config --file out/.config --enable CONFIG_HIGH_RES_TIMERS
+        scripts/config --file out/.config --set-val CONFIG_HZ 1000
+
+        # stability
+        scripts/config --file out/.config --disable CONFIG_DEBUG_INFO
+        scripts/config --file out/.config --disable CONFIG_SND_DEBUG
+
+        make O=out olddefconfig
+
+    # ---------------- BUILD ----------------
+    - name: Build
+      working-directory: ./kernel
+      run: |
+        set -e
         make -j$(nproc) O=out \
           ARCH=arm64 \
           CC=clang \
@@ -104,26 +115,23 @@ jobs:
           CROSS_COMPILE=aarch64-linux-android- \
           CROSS_COMPILE_ARM32=arm-linux-androideabi- \
           CLANG_TRIPLE=aarch64-linux-gnu- \
-          LLVM=1 \
-          LLVM_IAS=1 \
+          LLVM=1 LLVM_IAS=1 \
           Image.gz dtbo.img
 
-    - name: Package Kernel
+        test -f out/arch/arm64/boot/Image.gz
+
+    # ---------------- PACKAGE ----------------
+    - name: Package
       run: |
-        if [ ! -f kernel/out/arch/arm64/boot/Image.gz ]; then
-          echo "ERROR: Image.gz not found!"
-          exit 1
-        fi
         cp kernel/out/arch/arm64/boot/Image.gz AnyKernel3/
         cp kernel/out/arch/arm64/boot/dtbo.img AnyKernel3/
-        [ -f kernel/out/arch/arm64/boot/dtb.img ] && cp kernel/out/arch/arm64/boot/dtb.img AnyKernel3/
-        cd AnyKernel3
-        zip -r9 ../Xiaomi_Miatoll_UAC2_$(date +%Y%m%d-%H%M%S).zip * -x .git README.md .gitignore
-        echo "✅ Kernel package created successfully"
 
-    - name: Upload Kernel Zip
+        cd AnyKernel3
+        zip -r9 ../Miatoll_UAC2_DAC.zip . -x ".git*" "*.md"
+
+    # ---------------- UPLOAD ----------------
+    - name: Upload
       uses: actions/upload-artifact@v4
       with:
-        name: Xiaomi-Miatoll-Kernel-UAC2
-        path: Xiaomi_Miatoll_UAC2_*.zip
-        compression-level: 0
+        name: Miatoll-UAC2-DAC
+        path: Miatoll_UAC2_DAC.zip
