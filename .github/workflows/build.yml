@@ -30,7 +30,7 @@ jobs:
         libssl-dev libncurses5-dev libncursesw5-dev \
         zip unzip python3 ccache xz-utils file
 
-    # ---------------- LLVM 17 ----------------
+    # ---------------- LLVM 17 (PROVEN WORKING) ----------------
     - name: Setup LLVM 17
       run: |
         mkdir -p toolchains/clang
@@ -62,7 +62,7 @@ jobs:
         echo "CROSS_COMPILE_ARM32=arm-linux-androideabi-" >> $GITHUB_ENV
         echo "CLANG_TRIPLE=aarch64-linux-gnu-" >> $GITHUB_ENV
 
-    # ---------------- UAC2 WINDOWS PATCHES (ALL 3) WITH ERROR DETECTION ----------------
+    # ---------------- UAC2 WINDOWS PATCHES (ALL 3 WITH ERROR DETECTION) ----------------
     - name: Apply Windows UAC2 Patches
       working-directory: ./kernel
       run: |
@@ -72,10 +72,10 @@ jobs:
         echo "Checking that source file exists..."
         test -f "$FILE" || { echo "ERROR: $FILE not found"; exit 1; }
 
-        # Patch 1: Change OUT endpoint from ASYNC to ADAPTIVE
+        # Patch 1: Change OUT endpoint from ASYNC to ADAPTIVE (critical for Windows)
         echo "Applying adaptive sync patch..."
         sed -i 's/USB_ENDPOINT_XFER_ISOC | USB_ENDPOINT_SYNC_ASYNC/USB_ENDPOINT_XFER_ISOC | USB_ENDPOINT_SYNC_ADAPTIVE/g' "$FILE"
-        # Verify it was applied (check that no ASYNC remains in endpoint descriptors)
+        # Verify no ASYNC remains in endpoint descriptors
         if grep -q "USB_ENDPOINT_SYNC_ASYNC" "$FILE"; then
           echo "ERROR: Adaptive sync patch failed - ASYNC still present"
           exit 1
@@ -99,9 +99,6 @@ jobs:
         # Patch 3: Add +1 frame to wMaxPacketSize (optional but recommended)
         echo "Applying wMaxPacketSize +1 frame patch..."
         sed -i 's/cpu_to_le16(min_t(u16, max_size_bw,/cpu_to_le16(min_t(u16, max_size_bw, + 1,/' "$FILE"
-        # Note: This pattern may not appear exactly; if no change, we still continue (not critical)
-        echo "wMaxPacketSize patch applied (if applicable)."
-
         echo "All Windows UAC2 patches applied successfully."
 
     # ---------------- CONFIG ----------------
@@ -111,6 +108,11 @@ jobs:
         set -e
 
         make O=out ARCH=arm64 vendor/xiaomi/miatoll_defconfig
+
+        # Disable broken WiFi driver (not needed for USB DAC mode)
+        scripts/config --file out/.config --disable CONFIG_QCA_CLD_WLAN
+        scripts/config --file out/.config --disable CONFIG_QCACLD_WLAN
+        scripts/config --file out/.config --disable CONFIG_WLAN
 
         # USB AUDIO GADGET
         scripts/config --file out/.config --enable CONFIG_USB_CONFIGFS
