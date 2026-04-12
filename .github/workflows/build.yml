@@ -62,7 +62,7 @@ jobs:
         echo "CROSS_COMPILE_ARM32=arm-linux-androideabi-" >> $GITHUB_ENV
         echo "CLANG_TRIPLE=aarch64-linux-gnu-" >> $GITHUB_ENV
 
-    # ---------------- UAC2 WINDOWS PATCHES (ALL 3 WITH ERROR DETECTION) ----------------
+    # ---------------- UAC2 WINDOWS PATCHES (ADAPTIVE SYNC + TERMINAL TYPES) ----------------
     - name: Apply Windows UAC2 Patches
       working-directory: ./kernel
       run: |
@@ -75,7 +75,6 @@ jobs:
         # Patch 1: Change OUT endpoint from ASYNC to ADAPTIVE (critical for Windows)
         echo "Applying adaptive sync patch..."
         sed -i 's/USB_ENDPOINT_XFER_ISOC | USB_ENDPOINT_SYNC_ASYNC/USB_ENDPOINT_XFER_ISOC | USB_ENDPOINT_SYNC_ADAPTIVE/g' "$FILE"
-        # Verify no ASYNC remains in endpoint descriptors
         if grep -q "USB_ENDPOINT_SYNC_ASYNC" "$FILE"; then
           echo "ERROR: Adaptive sync patch failed - ASYNC still present"
           exit 1
@@ -96,10 +95,7 @@ jobs:
         fi
         echo "Terminal type patch applied."
 
-        # Patch 3: Add +1 frame to wMaxPacketSize (optional but recommended)
-        echo "Applying wMaxPacketSize +1 frame patch..."
-        sed -i 's/cpu_to_le16(min_t(u16, max_size_bw,/cpu_to_le16(min_t(u16, max_size_bw, + 1,/' "$FILE"
-        echo "All Windows UAC2 patches applied successfully."
+        echo "All critical Windows UAC2 patches applied successfully."
 
     # ---------------- CONFIG ----------------
     - name: Configure kernel
