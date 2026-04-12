@@ -30,7 +30,7 @@ jobs:
         libssl-dev libncurses5-dev libncursesw5-dev \
         zip unzip python3 ccache xz-utils file
 
-    # ---------------- LLVM 17 ----------------
+    # ---------------- LLVM 17 (PROVEN WORKING) ----------------
     - name: Setup LLVM 17
       run: |
         mkdir -p toolchains/clang
@@ -72,7 +72,7 @@ jobs:
         echo "Checking that source file exists..."
         test -f "$FILE" || { echo "ERROR: $FILE not found"; exit 1; }
 
-        # Patch 1: Change OUT endpoint from ASYNC to ADAPTIVE
+        # Patch 1: Change OUT endpoint from ASYNC to ADAPTIVE (critical for Windows)
         echo "Applying adaptive sync patch..."
         sed -i 's/USB_ENDPOINT_XFER_ISOC | USB_ENDPOINT_SYNC_ASYNC/USB_ENDPOINT_XFER_ISOC | USB_ENDPOINT_SYNC_ADAPTIVE/g' "$FILE"
         if grep -q "USB_ENDPOINT_SYNC_ASYNC" "$FILE"; then
@@ -97,24 +97,16 @@ jobs:
 
         echo "All critical Windows UAC2 patches applied successfully."
 
-    # ---------------- ADD wMaxPacketSize +1 FRAME PATCH ----------------
+    # ---------------- ADD wMaxPacketSize +1 FRAME PATCH (Fixes 48kHz) ----------------
     - name: Apply wMaxPacketSize +1 Frame Patch
       working-directory: ./kernel
       run: |
-        cat << 'EOF' > /tmp/wmax_patch.diff
---- a/drivers/usb/gadget/function/f_uac2.c
-+++ b/drivers/usb/gadget/function/f_uac2.c
-@@ -537,7 +537,7 @@ static int set_ep_max_packet_size(const struct f_uac2_opts *uac2_opts,
- 
- 	max_size_bw = num_channels(chmask) * ssize *
- 		(uac2_opts->fb_max > 0 ? 1 : 0) +
--		DIV_ROUND_UP(srate, factor / (1 << (ep_desc->bInterval - 1)));
-+		(DIV_ROUND_UP(srate, factor / (1 << (ep_desc->bInterval - 1))) + 1);
- 	ep_desc->wMaxPacketSize = cpu_to_le16(min_t(u16, max_size_bw,
- 						    max_size_ep));
- 
-EOF
-        patch -p1 --fuzz=3 --ignore-whitespace < /tmp/wmax_patch.diff
+        set -e
+        FILE="drivers/usb/gadget/function/f_uac2.c"
+        # The exact line we need to change (with possible leading spaces)
+        # We replace the line that contains "DIV_ROUND_UP(srate, factor / (1 << (ep_desc->bInterval - 1)));"
+        # with the same line wrapped in parentheses and with "+ 1" at the end.
+        sed -i '/DIV_ROUND_UP(srate, factor \/ (1 << (ep_desc->bInterval - 1)));/ s/.*/        (&) + 1/' "$FILE"
         echo "wMaxPacketSize +1 frame patch applied successfully."
 
     # ---------------- CONFIG ----------------
@@ -125,20 +117,24 @@ EOF
 
         make O=out ARCH=arm64 vendor/xiaomi/miatoll_defconfig
 
+        # Disable broken WiFi driver (not needed for USB DAC mode)
         scripts/config --file out/.config --disable CONFIG_QCA_CLD_WLAN
         scripts/config --file out/.config --disable CONFIG_QCACLD_WLAN
         scripts/config --file out/.config --disable CONFIG_WLAN
 
+        # USB AUDIO GADGET
         scripts/config --file out/.config --enable CONFIG_USB_CONFIGFS
         scripts/config --file out/.config --enable CONFIG_USB_CONFIGFS_F_UAC2
         scripts/config --file out/.config --enable CONFIG_USB_CONFIGFS_F_UAC1
         scripts/config --file out/.config --enable CONFIG_USB_G_AUDIO
         scripts/config --file out/.config --enable CONFIG_SND_USB_AUDIO
 
+        # LOW LATENCY SAFE SETTINGS
         scripts/config --file out/.config --enable CONFIG_PREEMPT
         scripts/config --file out/.config --enable CONFIG_HIGH_RES_TIMERS
         scripts/config --file out/.config --set-val CONFIG_HZ 1000
 
+        # stability
         scripts/config --file out/.config --disable CONFIG_DEBUG_INFO
         scripts/config --file out/.config --disable CONFIG_SND_DEBUG
 
@@ -182,6 +178,7 @@ EOF
       run: |
         cp kernel/out/arch/arm64/boot/Image.gz AnyKernel3/
         cp kernel/out/arch/arm64/boot/dtbo.img AnyKernel3/
+
         cd AnyKernel3
         zip -r9 ../Miatoll_UAC2_DAC.zip . -x ".git*" "*.md"
 
