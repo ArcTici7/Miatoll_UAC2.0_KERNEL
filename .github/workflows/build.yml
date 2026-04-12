@@ -104,9 +104,8 @@ jobs:
         set -e
         FILE="drivers/usb/gadget/function/f_uac2.c"
 
-        # Create a patch file
-        cat > /tmp/wmax_patch.diff << 'EOF'
---- a/drivers/usb/gadget/function/f_uac2.c
+        # Write the patch file using printf (YAML-safe)
+        printf '--- a/drivers/usb/gadget/function/f_uac2.c
 +++ b/drivers/usb/gadget/function/f_uac2.c
 @@ -537,7 +537,7 @@ static int set_ep_max_packet_size(const struct f_uac2_opts *uac2_opts,
  
@@ -117,8 +116,9 @@ jobs:
  	ep_desc->wMaxPacketSize = cpu_to_le16(min_t(u16, max_size_bw,
  						    max_size_ep));
  
-EOF
-        # Apply patch with fuzz (ignore whitespace/line number mismatches)
+' > /tmp/wmax_patch.diff
+
+        # Apply the patch with fuzz
         patch -p1 --fuzz=3 --ignore-whitespace < /tmp/wmax_patch.diff
         echo "wMaxPacketSize +1 frame patch applied successfully."
 
